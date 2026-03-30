@@ -267,7 +267,7 @@ CREATE TABLE `paiements` (
     `tenant_id`         INT NOT NULL,
     `location_id`       INT NOT NULL,
     `montant`           DECIMAL(12,2) NOT NULL,
-    `mode_paiement`     ENUM('espece','mobile_money','virement','cheque','carte') NOT NULL DEFAULT 'espece',
+    `mode_paiement`     VARCHAR(30) NOT NULL DEFAULT 'espece',
     `reference`         VARCHAR(100) DEFAULT NULL,
     `notes`             TEXT DEFAULT NULL,
     `created_by`        INT DEFAULT NULL,

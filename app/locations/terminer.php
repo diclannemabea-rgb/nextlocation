@@ -70,7 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $statutCaution   = trim($_POST['statut_caution']   ?? 'rendue');
     $notesRetour     = trim($_POST['notes_retour']     ?? '');
     $paiementFinale  = (float)str_replace(',', '.', $_POST['paiement_finale'] ?? '0');
-    $modePaie        = trim($_POST['mode_paiement']    ?? 'especes');
+    $modePaie        = trim($_POST['mode_paiement']    ?? 'espece');
 
     if ($kmRetour > 0 && $kmRetour < (int)$loc['km_depart']) {
         $errors[] = 'Le km de retour (' . number_format($kmRetour, 0, ',', ' ') . ') ne peut pas être inférieur au km départ (' . number_format((int)$loc['km_depart'], 0, ',', ' ') . ').';

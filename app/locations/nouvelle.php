@@ -119,9 +119,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->prepare("UPDATE vehicules SET statut='loue' WHERE id=? AND tenant_id=?")->execute([$vehiculeId,$tenantId]);
             if ($avance > 0) {
                 // mode_paiement enum: espece|mobile_money|virement|cheque|carte
-                $mpPay = $modePaiement === 'especes' ? 'espece' : $modePaiement;
                 $db->prepare("INSERT INTO paiements (tenant_id,location_id,montant,mode_paiement,notes,created_at) VALUES (?,?,?,?,'Avance initiale',NOW())")
-                   ->execute([$tenantId,$lid,$avance,$mpPay]);
+                   ->execute([$tenantId,$lid,$avance,$modePaiement]);
             }
             $db->commit();
             logActivite($db,'create','locations',"Location #$lid créée");

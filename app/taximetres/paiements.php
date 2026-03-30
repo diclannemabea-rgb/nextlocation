@@ -30,7 +30,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $taximetreId = (int)$taximetreId;
         $statutJour  = $ligne['statut_jour']  ?? 'non_paye';
         $montant     = $statutJour === 'paye' ? (float)($ligne['montant'] ?? 0) : 0;
-        $mode        = $ligne['mode_paiement'] ?? 'especes';
+        $mode        = $ligne['mode_paiement'] ?? 'espece';
         $kmDebut     = ($ligne['km_debut'] ?? '') !== '' ? (int)$ligne['km_debut'] : null;
         $kmFin       = ($ligne['km_fin']   ?? '') !== '' ? (int)$ligne['km_fin']   : null;
         $notes       = trim($ligne['notes'] ?? '');
@@ -294,7 +294,7 @@ require_once BASE_PATH . '/includes/header.php';
                     $paie   = $paieMap[$tid] ?? null;
                     $statut = $paie['statut_jour'] ?? '';
                     $isSaisi = $paie !== null;
-                    $savedMode = $paie['mode_paiement'] ?? 'especes';
+                    $savedMode = $paie['mode_paiement'] ?? 'espece';
 
                     $rowClass = '';
                     if ($statut === 'paye')     $rowClass = 'is-paye';
@@ -378,7 +378,7 @@ require_once BASE_PATH . '/includes/header.php';
             $paie   = $paieMap[$tid] ?? null;
             $statut = $paie['statut_jour'] ?? '';
             $isSaisi = $paie !== null;
-            $savedMode = $paie['mode_paiement'] ?? 'especes';
+            $savedMode = $paie['mode_paiement'] ?? 'espece';
 
             $mcClass = '';
             if ($statut === 'paye')     $mcClass = 'mc-paye';

@@ -114,7 +114,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'montant_final'     => $montantFin,
             'caution'           => $caution,
             'avance'            => $avance,
-            'mode_paiement'     => $_POST['mode_paiement'] ?? 'especes',
+            'mode_paiement'     => $_POST['mode_paiement'] ?? 'espece',
             'lieu_destination'  => $lieuDest,
             'avec_chauffeur'    => $avecChauffeur,
             'canal_acquisition' => $canalAcq,

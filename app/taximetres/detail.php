@@ -69,7 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $statut       = $_POST['statut_jour']   ?? 'non_paye';
         $montant      = (float)($_POST['montant']       ?? 0);
         $montantFonds = (float)($_POST['montant_fonds'] ?? 0);
-        $mode         = $_POST['mode_paiement'] ?? 'especes';
+        $mode         = $_POST['mode_paiement'] ?? 'espece';
         $kmDebut      = !empty($_POST['km_debut']) ? (int)$_POST['km_debut'] : null;
         $kmFin        = !empty($_POST['km_fin'])   ? (int)$_POST['km_fin']   : null;
         $notes        = trim($_POST['notes'] ?? '');

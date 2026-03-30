@@ -46,7 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── Ajouter paiement sur réservation ─────────────────────────────────────
     if ($action === 'paiement' && in_array($rsv['statut'], ['en_attente', 'confirmee'])) {
         $montant = cleanNumber($_POST['montant'] ?? '0');
-        $mode    = $_POST['mode_paiement'] ?? 'especes';
+        $mode    = $_POST['mode_paiement'] ?? 'espece';
         $notes   = trim($_POST['notes_paiement'] ?? '');
 
         if ($montant <= 0) {
@@ -62,7 +62,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // ── Convertir en location ──────────────────────────────────────────────────
     if ($action === 'convertir' && in_array($rsv['statut'], ['en_attente', 'confirmee'])) {
         $paiementReste = cleanNumber($_POST['paiement_reste'] ?? '0');
-        $mode          = $_POST['mode_paiement_conv'] ?? 'especes';
+        $mode          = $_POST['mode_paiement_conv'] ?? 'espece';
         $typeLocation  = $_POST['type_location'] ?? 'standard';
         $kmDepart      = (int)($_POST['km_depart'] ?? 0) ?: null;
 

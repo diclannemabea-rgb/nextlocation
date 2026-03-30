@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     if ($_POST['action'] === 'payer_dette_taxi') {
         $taxId   = (int)($_POST['taximetre_id'] ?? 0);
         $montant = (float)cleanNumber($_POST['montant'] ?? 0);
-        $mode    = $_POST['mode_paiement'] ?? 'especes';
+        $mode    = $_POST['mode_paiement'] ?? 'espece';
         $date    = $_POST['date_paiement'] ?? $today;
         if ($taxId && $montant > 0) {
             $chk = $db->prepare("SELECT id FROM taximetres WHERE id=? AND tenant_id=?");
@@ -48,7 +48,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         require_once BASE_PATH . '/models/LocationModel.php';
         $locId   = (int)($_POST['location_id'] ?? 0);
         $montant = (float)cleanNumber($_POST['montant'] ?? 0);
-        $mode    = $_POST['mode_paiement'] ?? 'especes';
+        $mode    = $_POST['mode_paiement'] ?? 'espece';
         if ($locId && $montant > 0) {
             $locModel = new LocationModel($db);
             $loc = $db->prepare("SELECT id FROM locations WHERE id=? AND tenant_id=?");
