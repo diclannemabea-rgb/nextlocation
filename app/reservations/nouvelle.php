@@ -23,7 +23,8 @@ $tenantId = getTenantId();
 $stVehs = $db->prepare("
     SELECT id, nom, immatriculation, marque, modele, prix_location_jour, statut
     FROM vehicules
-    WHERE tenant_id=? AND type_vehicule='location'
+    WHERE tenant_id=? AND statut='disponible'
+      AND (type_vehicule = 'location' OR type_vehicule IS NULL OR type_vehicule = '')
     ORDER BY nom
 ");
 $stVehs->execute([$tenantId]);
@@ -44,7 +45,7 @@ $clientsJson = array_map(fn($c) => [
 ], $stCli->fetchAll(PDO::FETCH_ASSOC));
 
 // Chauffeurs location
-$stChauf = $db->prepare("SELECT id, nom, prenom FROM chauffeurs WHERE tenant_id=? AND type_chauffeur='location' AND statut='actif' ORDER BY nom");
+$stChauf = $db->prepare("SELECT id, nom, prenom FROM chauffeurs WHERE tenant_id=? AND statut='actif' ORDER BY nom");
 $stChauf->execute([$tenantId]);
 $chauffeurs = $stChauf->fetchAll(PDO::FETCH_ASSOC);
 

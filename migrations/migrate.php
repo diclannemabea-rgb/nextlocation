@@ -245,7 +245,7 @@ CREATE TABLE `locations` (
     `km_retour`             INT DEFAULT NULL,
     `carburant_depart`      VARCHAR(20) DEFAULT 'plein',
     `carburant_retour`      VARCHAR(20) DEFAULT NULL,
-    `canal_acquisition`     ENUM('direct','facebook','instagram','whatsapp','site_web','recommandation','autre') DEFAULT 'direct',
+    `canal_acquisition`     VARCHAR(30) DEFAULT 'direct',
     `contrat_pdf`           VARCHAR(255) DEFAULT NULL,
     `notes`                 TEXT DEFAULT NULL,
     `created_by`            INT DEFAULT NULL,
