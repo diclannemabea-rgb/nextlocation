@@ -1,6 +1,9 @@
 FROM php:8.2-apache
 
-RUN docker-php-ext-install pdo pdo_mysql mysqli
+RUN apt-get update && apt-get install -y \
+    libicu-dev \
+    && docker-php-ext-install pdo pdo_mysql mysqli intl \
+    && apt-get clean
 
 COPY . /var/www/html/
 
