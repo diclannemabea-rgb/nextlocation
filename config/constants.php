@@ -100,6 +100,8 @@ define('DATE_SQL',         'Y-m-d');
 date_default_timezone_set('Africa/Abidjan');
 
 // Erreurs (désactiver en prod)
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
-error_reporting(E_ALL);
+
+
+ini_set('display_errors', 0);
+ini_set('display_startup_errors', 0);
+error_reporting(0);
