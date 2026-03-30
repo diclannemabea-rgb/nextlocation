@@ -23,7 +23,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $forfait = $_POST['forfait'] ?? 'mensuel';
             $duree   = $forfait === 'annuel' ? 365 : 30;
             $prix    = $forfait === 'annuel' ? 150000 : 20000;
-            $db->prepare("UPDATE tenants SET actif=1, plan=? WHERE id=?")->execute([$forfait, $tid]);
+            $db->prepare("UPDATE tenants SET actif=1 WHERE id=?")->execute([$tid]);
             $db->prepare("UPDATE abonnements SET statut='expire' WHERE tenant_id=? AND statut='actif'")->execute([$tid]);
             $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid, $forfait, $prix, $duree]);
             try { $db->prepare("INSERT INTO mouvements_abo (tenant_id,type,montant,description,created_by) VALUES (?,?,?,?,?)")->execute([$tid, 'renouvellement', $prix, "Activation — forfait $forfait", getUserId()]); } catch(\Throwable $e){}
@@ -47,7 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else {
                 $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid, $forfait, $prix, $duree]);
             }
-            $db->prepare("UPDATE tenants SET plan=? WHERE id=?")->execute([$forfait, $tid]);
+            // plan stays as-is in tenants (enum: starter/pro/enterprise)
             try { $db->prepare("INSERT INTO mouvements_abo (tenant_id,type,montant,description,created_by) VALUES (?,?,?,?,?)")->execute([$tid, 'renouvellement', $prix, "Renouvellement forfait $forfait", getUserId()]); } catch(\Throwable $e){}
             setFlash(FLASH_SUCCESS, 'Abonnement renouvelé — forfait ' . $forfait . '.');
         } catch(\Throwable $e) {
@@ -67,7 +67,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($act === 'toggle_actif' && $tid) {
         $cur = (int)$db->query("SELECT actif FROM tenants WHERE id=$tid")->fetchColumn();
-        $db->prepare("UPDATE tenants SET actif=?, updated_at=NOW() WHERE id=?")->execute([$cur ? 0 : 1, $tid]);
+        $db->prepare("UPDATE tenants SET actif=? WHERE id=?")->execute([$cur ? 0 : 1, $tid]);
         setFlash(FLASH_SUCCESS, $cur ? 'Compte suspendu.' : 'Compte réactivé.');
     }
 
