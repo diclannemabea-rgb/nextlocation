@@ -204,9 +204,13 @@ CREATE TABLE `chauffeurs` (
     `email`             VARCHAR(100) DEFAULT NULL,
     `numero_permis`     VARCHAR(50) DEFAULT NULL,
     `date_permis`       DATE DEFAULT NULL,
+    `numero_cni`        VARCHAR(50) DEFAULT NULL,
+    `date_naissance`    DATE DEFAULT NULL,
     `adresse`           TEXT DEFAULT NULL,
     `statut`            ENUM('actif','inactif') NOT NULL DEFAULT 'actif',
     `photo`             VARCHAR(255) DEFAULT NULL,
+    `type_chauffeur`    VARCHAR(30) DEFAULT 'interne',
+    `vehicule_id`       INT DEFAULT NULL,
     `notes`             TEXT DEFAULT NULL,
     `created_at`        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (`tenant_id`) REFERENCES `tenants`(`id`) ON DELETE CASCADE
