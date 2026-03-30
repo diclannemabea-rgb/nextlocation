@@ -39,9 +39,8 @@ $total = (int)$cnt->fetchColumn();
 $stmt = $db->prepare("
     SELECT
         v.*,
-        /* RECETTES: initiales + paiements locations + taxi */
-        COALESCE(v.recettes_initiales, 0)
-        + COALESCE((SELECT SUM(p.montant) FROM paiements p
+        /* RECETTES: paiements locations + paiements taxi (pas recettes_initiales pour éviter double comptage) */
+        COALESCE((SELECT SUM(p.montant) FROM paiements p
                     JOIN locations l ON l.id = p.location_id
                     WHERE l.vehicule_id = v.id AND p.tenant_id = v.tenant_id), 0)
         + COALESCE((SELECT SUM(p.montant) FROM paiements_taxi p
@@ -49,11 +48,8 @@ $stmt = $db->prepare("
                     WHERE t.vehicule_id = v.id AND p.statut_jour = 'paye'), 0)
         AS total_recettes,
 
-        /* DÉPENSES: initiales + charges + maintenances */
-        COALESCE(v.depenses_initiales, 0)
-        + COALESCE((SELECT SUM(c.montant) FROM charges c WHERE c.vehicule_id = v.id), 0)
-        + COALESCE((SELECT SUM(m.cout) FROM maintenances m
-                    WHERE m.vehicule_id = v.id AND m.statut = 'termine'), 0)
+        /* DÉPENSES: table charges uniquement (inclut déjà les maintenances terminées, pas depenses_initiales pour éviter double comptage) */
+        COALESCE((SELECT SUM(c.montant) FROM charges c WHERE c.vehicule_id = v.id AND c.tenant_id = v.tenant_id), 0)
         AS total_depenses,
 
         /* DERNIÈRE MAINTENANCE TERMINÉE */
@@ -292,10 +288,10 @@ function vidangeAlert(array $v): string {
     $capital    = (float)($v['capital_investi']    ?? 0);
     $recettes   = (float)($v['total_recettes']    ?? 0);
     $depenses   = (float)($v['total_depenses']    ?? 0);
-    $recInit    = (float)($v['recettes_initiales'] ?? 0);
-    $depInit    = (float)($v['depenses_initiales'] ?? 0);
-    $recCumul   = $recettes - $recInit;
-    $depCumul   = $depenses - $depInit;
+    $recInit    = 0;
+    $depInit    = 0;
+    $recCumul   = $recettes;
+    $depCumul   = $depenses;
     $benefice   = $recettes - $depenses - $capital;
     $roi        = $capital > 0 ? ($benefice / $capital * 100) : 0;
     $km        = (int)($v['kilometrage_actuel'] ?? 0);
