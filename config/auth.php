@@ -1,8 +1,4 @@
 <?php
-/**
- * Middleware d'authentification FlotteCar
- */
-
 if (!defined('BASE_URL') && defined('BASE_PATH')) {
     require_once BASE_PATH . '/config/constants.php';
 }
@@ -29,16 +25,11 @@ function requireTenantAuth(): void {
         $stmt = $db->prepare("SELECT actif, plan FROM tenants WHERE id = ? LIMIT 1");
         $stmt->execute([$tid]);
         $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        if (!$row) {
-            session_unset(); session_destroy();
-            redirect(BASE_URL . 'auth/login.php?deleted=1');
-        }
+        if (!$row) { session_unset(); session_destroy(); redirect(BASE_URL . 'auth/login.php?deleted=1'); }
         $_SESSION['tenant_actif'] = (int)$row['actif'];
         $_SESSION['tenant_plan']  = $row['plan'];
     } catch (\Throwable $e) {}
-    if ((int)($_SESSION['tenant_actif'] ?? 1) === 0) {
-        redirect(BASE_URL . 'auth/compte_inactif.php');
-    }
+    if ((int)($_SESSION['tenant_actif'] ?? 1) === 0) redirect(BASE_URL . 'auth/compte_inactif.php');
     if (!empty($_SESSION['abonnement_expire'])) redirect(BASE_URL . 'auth/abonnement_expire.php');
 }
 
