@@ -25,6 +25,7 @@ class Database {
             $this->conn->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
             $this->conn->setAttribute(PDO::ATTR_EMULATE_PREPARES, false);
             $this->conn->exec("SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci");
+            $this->conn->exec("SET SESSION sql_mode=(SELECT REPLACE(@@sql_mode,'ONLY_FULL_GROUP_BY',''))");
         } catch(PDOException $e) {
             echo "Erreur de connexion : " . $e->getMessage();
             die();
