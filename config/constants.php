@@ -7,7 +7,9 @@
 define('UPLOAD_PATH',     BASE_PATH . '/uploads/');
 // Détection automatique du protocole (http en local, https en production)
 if (!defined('BASE_URL')) {
-    $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off')
+          || (!empty($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+          ? 'https' : 'http';
     $host  = $_SERVER['HTTP_HOST'] ?? 'localhost';
     define('BASE_URL', $proto . '://' . $host . '/');
 }
