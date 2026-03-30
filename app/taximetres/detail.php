@@ -365,7 +365,7 @@ $sVehs->execute([$tenantId, $taxi['vehicule_id'], $tenantId, $taxiId]);
 $veiculesDispos = $sVehs->fetchAll(PDO::FETCH_ASSOC);
 
 // ── Taux de présence (30 derniers jours) ─────────────────────────────────────
-$sTaux = $db->prepare("SELECT COUNT(*) total, SUM(statut_jour IN('paye','non_paye')) travailles
+$sTaux = $db->prepare("SELECT COUNT(*) total, SUM(CASE WHEN statut_jour IN('paye','non_paye') THEN 1 ELSE 0 END) travailles
     FROM paiements_taxi WHERE taximetre_id=? AND tenant_id=? AND date_paiement >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)");
 $sTaux->execute([$taxiId, $tenantId]);
 $tauxData = $sTaux->fetch(PDO::FETCH_ASSOC);

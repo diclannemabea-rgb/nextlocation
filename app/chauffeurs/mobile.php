@@ -61,8 +61,8 @@ $chId = $chauffeur['id'];
 $soldeStmt = $db->prepare("
     SELECT
         COUNT(CASE WHEN statut_jour='non_paye' THEN 1 END) AS jours_impayes,
-        COALESCE(SUM(CASE WHEN statut_jour='non_paye' THEN montant_du ELSE 0 END), 0) AS total_impaye,
-        COALESCE(SUM(CASE WHEN statut_jour='paye' THEN montant_paye ELSE 0 END), 0) AS total_paye,
+        COALESCE(SUM(CASE WHEN statut_jour='non_paye' THEN montant ELSE 0 END), 0) AS total_impaye,
+        COALESCE(SUM(CASE WHEN statut_jour='paye' THEN montant ELSE 0 END), 0) AS total_paye,
         COUNT(*) AS total_jours
     FROM paiements_taxi
     WHERE taximetre_id = ?
@@ -72,7 +72,7 @@ $solde = $soldeStmt->fetch(PDO::FETCH_ASSOC);
 
 // 15 derniers jours
 $histStmt = $db->prepare("
-    SELECT date_paiement, statut_jour, montant_du, montant_paye
+    SELECT date_paiement, statut_jour, montant_du, montant AS montant_paye
     FROM paiements_taxi
     WHERE taximetre_id = ?
     ORDER BY date_paiement DESC
@@ -88,7 +88,7 @@ $moisStmt = $db->prepare("
         COUNT(CASE WHEN statut_jour='non_paye' THEN 1 END) AS jours_impayes,
         COUNT(CASE WHEN statut_jour='jour_off' THEN 1 END) AS jours_off,
         COUNT(CASE WHEN statut_jour IN ('panne','accident') THEN 1 END) AS jours_panne,
-        COALESCE(SUM(montant_paye),0) AS total_verse
+        COALESCE(SUM(montant),0) AS total_verse
     FROM paiements_taxi
     WHERE taximetre_id = ?
       AND MONTH(date_paiement) = MONTH(CURDATE())

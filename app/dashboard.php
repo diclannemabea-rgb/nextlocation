@@ -85,7 +85,7 @@ $aRecevStmt->execute([$tenantId]); $totalARecevoir = (float)$aRecevStmt->fetchCo
 $chargesStmt = $db->prepare("SELECT COALESCE(SUM(montant),0) FROM charges WHERE tenant_id=? AND DATE_FORMAT(date_charge,'%Y-%m')=?");
 $chargesStmt->execute([$tenantId,$thisMonth]); $chargesMois = (float)$chargesStmt->fetchColumn();
 
-$totalDetteTaxiStmt = $db->prepare("SELECT t.id, t.tarif_journalier, t.date_debut, GREATEST(0,DATEDIFF(CURDATE(),t.date_debut)+1) AS periode, COALESCE(SUM(pt.statut_jour IN('jour_off','panne','accident','maladie')),0) AS jours_off, COALESCE(SUM(CASE WHEN pt.statut_jour='paye' THEN pt.montant ELSE 0 END),0) AS total_percu FROM taximetres t LEFT JOIN paiements_taxi pt ON pt.taximetre_id=t.id AND pt.tenant_id=t.tenant_id WHERE t.tenant_id=? AND t.statut='actif' GROUP BY t.id");
+$totalDetteTaxiStmt = $db->prepare("SELECT t.id, t.tarif_journalier, t.date_debut, GREATEST(0,DATEDIFF(CURDATE(),t.date_debut)+1) AS periode, COALESCE(SUM(CASE WHEN pt.statut_jour IN('jour_off','panne','accident','maladie') THEN 1 ELSE 0 END),0) AS jours_off, COALESCE(SUM(CASE WHEN pt.statut_jour='paye' THEN pt.montant ELSE 0 END),0) AS total_percu FROM taximetres t LEFT JOIN paiements_taxi pt ON pt.taximetre_id=t.id AND pt.tenant_id=t.tenant_id WHERE t.tenant_id=? AND t.statut='actif' GROUP BY t.id");
 $totalDetteTaxiStmt->execute([$tenantId]);
 $totalDetteTaxiGlobale = 0.0;
 foreach ($totalDetteTaxiStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
@@ -96,7 +96,7 @@ foreach ($totalDetteTaxiStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
 $hasTaxi = (int)($vstats['nb_taxi']??0) > 0;
 $taxiDettes = [];
 if ($hasTaxi) {
-    $tdStmt = $db->prepare("SELECT t.id, t.nom, t.prenom, t.telephone, t.tarif_journalier, t.date_debut, t.jour_repos, v.immatriculation, v.nom AS vnom, v.id AS vehicule_id, GREATEST(0,DATEDIFF(CURDATE(),t.date_debut)+1) AS total_jours_periode, COALESCE(SUM(pt.statut_jour IN('jour_off','panne','accident','maladie')),0) AS jours_off, COALESCE(SUM(CASE WHEN pt.statut_jour='paye' THEN pt.montant ELSE 0 END),0) AS total_percu FROM taximetres t INNER JOIN vehicules v ON v.id=t.vehicule_id LEFT JOIN paiements_taxi pt ON pt.taximetre_id=t.id AND pt.tenant_id=t.tenant_id WHERE t.tenant_id=? AND t.statut='actif' GROUP BY t.id ORDER BY t.nom ASC");
+    $tdStmt = $db->prepare("SELECT t.id, t.nom, t.prenom, t.telephone, t.tarif_journalier, t.date_debut, t.jour_repos, v.immatriculation, v.nom AS vnom, v.id AS vehicule_id, GREATEST(0,DATEDIFF(CURDATE(),t.date_debut)+1) AS total_jours_periode, COALESCE(SUM(CASE WHEN pt.statut_jour IN('jour_off','panne','accident','maladie') THEN 1 ELSE 0 END),0) AS jours_off, COALESCE(SUM(CASE WHEN pt.statut_jour='paye' THEN pt.montant ELSE 0 END),0) AS total_percu FROM taximetres t INNER JOIN vehicules v ON v.id=t.vehicule_id LEFT JOIN paiements_taxi pt ON pt.taximetre_id=t.id AND pt.tenant_id=t.tenant_id WHERE t.tenant_id=? AND t.statut='actif' GROUP BY t.id ORDER BY t.nom ASC");
     $tdStmt->execute([$tenantId]);
     foreach ($tdStmt->fetchAll(PDO::FETCH_ASSOC) as $tx) {
         $joursFacturables = max(0,(int)$tx['total_jours_periode']-(int)$tx['jours_off']);

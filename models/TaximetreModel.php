@@ -84,8 +84,8 @@ class TaximetreModel
         $stmt = $this->db->prepare(
             "SELECT
                 COUNT(*)                                                       AS total_saisis,
-                SUM(statut_jour IN ('paye','non_paye'))                        AS jours_travailles,
-                SUM(statut_jour IN ('jour_off','panne','accident'))            AS jours_off,
+                SUM(CASE WHEN statut_jour IN ('paye','non_paye') THEN 1 ELSE 0 END) AS jours_travailles,
+                SUM(CASE WHEN statut_jour IN ('jour_off','panne','accident') THEN 1 ELSE 0 END) AS jours_off,
                 SUM(statut_jour = 'paye')                                     AS jours_payes,
                 COALESCE(SUM(CASE WHEN statut_jour = 'paye' THEN montant ELSE 0 END), 0) AS total_paye
              FROM paiements_taxi

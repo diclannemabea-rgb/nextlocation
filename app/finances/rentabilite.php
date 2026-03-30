@@ -246,7 +246,7 @@ $totalCreances = array_sum(array_column($creances, 'reste_a_payer'));
 // ── Dettes taximantres ────────────────────────────────────────────────────────
 $sDettes = $db->prepare("
     SELECT tx.id, tx.nom, tx.prenom, v.nom veh_nom,
-           COALESCE(SUM(CASE WHEN pt.statut_jour='non_paye' THEN pt.montant_du ELSE 0 END),0) dette,
+           COALESCE(SUM(CASE WHEN pt.statut_jour='non_paye' THEN pt.montant ELSE 0 END),0) dette,
            COUNT(CASE WHEN pt.statut_jour='non_paye' THEN 1 END) nb_jours_impaye,
            COALESCE(SUM(ct.montant),0) contraventions_total
     FROM taximetres tx

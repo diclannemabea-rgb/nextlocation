@@ -57,7 +57,7 @@ foreach ($tenants as $t) {
     $taxi = $db->prepare("SELECT
         COUNT(CASE WHEN pt.statut_jour='paye' THEN 1 END) payes,
         COUNT(CASE WHEN pt.statut_jour='non_paye' THEN 1 END) impayes,
-        COALESCE(SUM(pt.montant_paye),0) total_paye
+        COALESCE(SUM(pt.montant),0) total_paye
         FROM paiements_taxi pt
         JOIN taximetres tx ON tx.id=pt.taximetre_id
         WHERE tx.tenant_id=? AND pt.date_paiement BETWEEN ? AND ?");
