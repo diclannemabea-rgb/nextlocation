@@ -25,7 +25,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $prix    = $forfait === 'annuel' ? 150000 : 20000;
         $db->prepare("UPDATE tenants SET actif=1, plan=?, updated_at=NOW() WHERE id=?")->execute([$forfait,$tid]);
         $db->prepare("UPDATE abonnements SET statut='expire' WHERE tenant_id=? AND statut='actif'")->execute([$tid]);
-        $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,$forfait,$prix,$duree]);
+        $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,'starter',$prix,$duree]);
         try { $db->prepare("INSERT INTO mouvements_abo (tenant_id,type,montant,description,created_by) VALUES (?,?,?,?,?)")->execute([$tid,'renouvellement',$prix,"Activation forfait $forfait",getUserId()]); } catch(\Throwable $e){}
         setFlash(FLASH_SUCCESS, 'Compte activé — forfait ' . $forfait . '.');
     }
@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($aboId) {
             $db->prepare("UPDATE abonnements SET date_fin=DATE_ADD(date_fin,INTERVAL ? DAY),plan=?,updated_at=NOW() WHERE id=?")->execute([$duree,$forfait,$aboId]);
         } else {
-            $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,$forfait,$prix,$duree]);
+            $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,'starter',$prix,$duree]);
         }
         $db->prepare("UPDATE tenants SET plan=? WHERE id=?")->execute([$forfait,$tid]);
         try { $db->prepare("INSERT INTO mouvements_abo (tenant_id,type,montant,description,created_by) VALUES (?,?,?,?,?)")->execute([$tid,'renouvellement',$prix,"Renouvellement forfait $forfait",getUserId()]); } catch(\Throwable $e){}
