@@ -22,8 +22,9 @@ $tenantId = getTenantId();
 $stVeh = $db->prepare("
     SELECT id, nom, immatriculation, marque, modele, prix_location_jour, kilometrage_actuel, carburant_type, type_vehicule, statut
     FROM vehicules
-    WHERE tenant_id = ? AND statut IN ('disponible','loue')
-    ORDER BY statut ASC, nom ASC
+    WHERE tenant_id = ? AND statut = 'disponible'
+      AND (type_vehicule = 'location' OR type_vehicule IS NULL OR type_vehicule = '')
+    ORDER BY nom ASC
 ");
 $stVeh->execute([$tenantId]);
 $vehs = $stVeh->fetchAll(PDO::FETCH_ASSOC);
@@ -145,8 +146,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // JSON pour JS
 $vehJson = [];
-foreach ($vehs as $v)
+$vehList = [];
+foreach ($vehs as $v) {
     $vehJson[$v['id']] = ['prix'=>(float)$v['prix_location_jour'],'km'=>(int)$v['kilometrage_actuel'],'carb'=>$v['carburant_type']??''];
+    $vehList[] = ['id'=>$v['id'],'nom'=>$v['nom'],'immat'=>$v['immatriculation'],'marque'=>$v['marque']??'','modele'=>$v['modele']??'','prix'=>(float)$v['prix_location_jour'],'km'=>(int)$v['kilometrage_actuel']];
+}
 
 $cliJson = [];
 foreach ($clients as $c)
@@ -311,21 +315,21 @@ require_once BASE_PATH . '/includes/header.php';
         <div class="loc-row c32">
             <div class="lf">
                 <label>Véhicule disponible <span class="req">*</span></label>
-                <select name="vehicule_id" id="vehicule_id" class="fc" required>
-                    <option value="">— Sélectionner un véhicule —</option>
-                    <?php foreach ($vehs as $v):
-                        $vLabel = sanitize($v['nom'].' – '.$v['immatriculation'].' ('.$v['marque'].' '.$v['modele'].')');
-                        $vStatut = $v['statut'] === 'loue' ? ' [EN LOCATION]' : '';
-                    ?>
-                    <option value="<?= $v['id'] ?>"
-                            data-prix="<?= (int)$v['prix_location_jour'] ?>"
-                            data-km="<?= (int)$v['kilometrage_actuel'] ?>"
-                            <?= $v['statut'] === 'loue' ? 'disabled style="color:#94a3b8"' : '' ?>
-                            <?= ($old['vehicule_id']??'') == $v['id'] ? 'selected':'' ?>>
-                        <?= $vLabel ?> · <?= formatMoney((float)$v['prix_location_jour']) ?>/j<?= $vStatut ?>
-                    </option>
-                    <?php endforeach ?>
-                </select>
+                <input type="hidden" name="vehicule_id" id="vehicule_id" value="<?= (int)($old['vehicule_id'] ?? $_GET['vehicule_id'] ?? 0) ?>">
+                <div class="client-search-wrap">
+                    <input type="text" id="veh_search" class="fc client-search-input"
+                           placeholder="Rechercher par nom, immatriculation…" autocomplete="off">
+                    <button type="button" class="client-clear" id="veh_clear" onclick="clearVehicule()" style="display:none">
+                        <i class="fas fa-times"></i>
+                    </button>
+                    <div class="client-dropdown" id="veh_dropdown"></div>
+                </div>
+                <div class="client-selected" id="veh_selected" style="display:none">
+                    <i class="fas fa-car" style="color:#0d9488"></i>
+                    <span class="cs-name" id="vs_name"></span>
+                    <span class="cs-tel" id="vs_prix"></span>
+                    <button type="button" class="cs-chg" onclick="clearVehicule()" title="Changer"><i class="fas fa-pencil"></i></button>
+                </div>
                 <?php if (empty($vehs)): ?>
                 <div style="font-size:.73rem;color:#f59e0b;margin-top:4px"><i class="fas fa-exclamation-triangle"></i> Aucun véhicule de location disponible.</div>
                 <?php endif ?>
@@ -540,8 +544,9 @@ require_once BASE_PATH . '/includes/header.php';
 
 <script>
 // ── Données JSON ─────────────────────────────────────────────
-const VEH  = <?= json_encode($vehJson,  JSON_UNESCAPED_UNICODE) ?>;
-const CLI  = <?= json_encode($cliJson,  JSON_UNESCAPED_UNICODE) ?>;
+const VEH     = <?= json_encode($vehJson,  JSON_UNESCAPED_UNICODE) ?>;
+const VEHLIST = <?= json_encode($vehList,  JSON_UNESCAPED_UNICODE) ?>;
+const CLI     = <?= json_encode($cliJson,  JSON_UNESCAPED_UNICODE) ?>;
 
 // ── Calcul montants ──────────────────────────────────────────
 function fmt(n) { return Math.round(n).toLocaleString('fr-FR') + ' FCFA'; }
@@ -570,15 +575,89 @@ function recalc() {
     rEl.style.color  = reste > 0 ? '#ef4444' : '#10b981';
 }
 
-document.getElementById('vehicule_id').addEventListener('change', function() {
-    const d = VEH[this.value];
-    if (d) {
-        document.getElementById('prix_par_jour').value  = d.prix;
-        document.getElementById('km_depart').value      = d.km;
-        const cs = document.getElementById('carburant_depart');
-        if (d.carb) cs.value = d.carb;
+// ── Véhicule search ─────────────────────────────────────────
+const vehSearchEl  = document.getElementById('veh_search');
+const vehDropEl    = document.getElementById('veh_dropdown');
+const vehSelEl     = document.getElementById('veh_selected');
+const vehClearBtn  = document.getElementById('veh_clear');
+const vehHiddenId  = document.getElementById('vehicule_id');
+
+function fmtK(n) { return n.toLocaleString('fr-FR'); }
+function vesc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function renderVehList(list) {
+    if (!list.length) {
+        vehDropEl.innerHTML = '<div class="client-item"><span class="ci-meta">Aucun véhicule trouvé</span></div>';
+    } else {
+        vehDropEl.innerHTML = list.map(v => `
+            <div class="client-item" onclick="selectVehicule(${v.id})">
+                <div>
+                    <span class="ci-name">${vesc(v.nom)}</span>
+                    <span class="ci-meta"> · ${vesc(v.immat)}</span>
+                    <span class="ci-meta" style="margin-left:4px">(${vesc(v.marque)} ${vesc(v.modele)})</span>
+                </div>
+                <span style="font-weight:700;color:#0d9488;font-size:.78rem;white-space:nowrap">${fmtK(v.prix)} F/j</span>
+            </div>`).join('');
     }
-    recalc();
+    vehDropEl.style.display = 'block';
+}
+
+vehSearchEl.addEventListener('focus', function() {
+    if (!this.value.trim()) renderVehList(VEHLIST.slice(0, 10));
+});
+vehSearchEl.addEventListener('input', function() {
+    const q = this.value.trim().toLowerCase();
+    vehClearBtn.style.display = q ? 'block' : 'none';
+    if (!q) { renderVehList(VEHLIST.slice(0, 10)); return; }
+    const res = VEHLIST.filter(v =>
+        v.nom.toLowerCase().includes(q) ||
+        v.immat.toLowerCase().includes(q) ||
+        (v.marque + ' ' + v.modele).toLowerCase().includes(q)
+    ).slice(0, 10);
+    renderVehList(res);
+});
+
+function selectVehicule(id) {
+    vehHiddenId.value = id;
+    const v = VEHLIST.find(x => x.id === id);
+    if (v) {
+        document.getElementById('vs_name').textContent = v.nom + ' – ' + v.immat + ' (' + v.marque + ' ' + v.modele + ')';
+        document.getElementById('vs_prix').textContent = fmtK(v.prix) + ' FCFA/j';
+        vehSelEl.style.display = 'flex';
+        vehSearchEl.style.display = 'none';
+        vehClearBtn.style.display = 'none';
+        vehDropEl.style.display = 'none';
+        // Remplir les champs associés
+        const d = VEH[id];
+        if (d) {
+            document.getElementById('prix_par_jour').value = d.prix;
+            document.getElementById('km_depart').value = d.km;
+            const cs = document.getElementById('carburant_depart');
+            if (d.carb) cs.value = d.carb;
+        }
+        recalc();
+    }
+}
+
+function clearVehicule() {
+    vehHiddenId.value = '';
+    vehSelEl.style.display = 'none';
+    vehSearchEl.style.display = 'block';
+    vehSearchEl.value = '';
+    vehSearchEl.focus();
+    vehDropEl.style.display = 'none';
+    vehClearBtn.style.display = 'none';
+}
+
+// Pré-remplir si vehicule_id dans URL ou POST
+(function() {
+    const vid = parseInt(vehHiddenId.value);
+    if (vid) selectVehicule(vid);
+})();
+
+// Fermer dropdown véhicule si clic ailleurs
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('#veh_search') && !e.target.closest('#veh_dropdown')) vehDropEl.style.display = 'none';
 });
 ['date_debut','date_fin','prix_par_jour','remise','avance'].forEach(id => {
     const el = document.getElementById(id);
