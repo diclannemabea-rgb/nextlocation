@@ -169,7 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $m->execute([$id, $tenantId]); $maint = $m->fetch(PDO::FETCH_ASSOC);
 
         if ($maint) {
-            $db->prepare("UPDATE maintenances SET statut='fait', km_fait=?, cout=COALESCE(?,cout), notes=CONCAT(COALESCE(notes,''), ?) WHERE id=? AND tenant_id=?")
+            $db->prepare("UPDATE maintenances SET statut='termine', km_fait=?, cout=COALESCE(?,cout), notes=CONCAT(COALESCE(notes,''), ?) WHERE id=? AND tenant_id=?")
                ->execute([$kmFait, $coutReel, $notes ? "\n↳ $notes" : '', $id, $tenantId]);
 
             // Enregistrer dans charges si coût renseigné + impacter dépenses véhicule
@@ -203,6 +203,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->prepare("DELETE FROM maintenances WHERE id=? AND tenant_id=?")->execute([$id, $tenantId]);
         setFlash(FLASH_SUCCESS, 'Maintenance supprimée.');
         redirect($redirTab('maintenances'));
+    }
+
+    // ── Vidange rapide (depuis alertes)
+    if ($action === 'vidange_rapide') {
+        $vId     = (int)($_POST['vehicule_id'] ?? 0);
+        $kmFait  = (int)($_POST['km_fait'] ?? 0);
+        $cout    = !empty($_POST['cout']) ? (float)$_POST['cout'] : null;
+        $tech    = trim($_POST['technicien'] ?? '') ?: null;
+        $notes   = trim($_POST['notes'] ?? '') ?: null;
+        $kmInter = !empty($_POST['km_intervalle']) ? (int)$_POST['km_intervalle'] : 5000;
+
+        $chk = $db->prepare("SELECT id,nom FROM vehicules WHERE id=? AND tenant_id=?");
+        $chk->execute([$vId, $tenantId]);
+        $veh = $chk->fetch(PDO::FETCH_ASSOC);
+
+        if ($veh && $kmFait > 0) {
+            // Enregistrer la vidange comme maintenance terminée
+            $db->prepare("INSERT INTO maintenances (tenant_id,vehicule_id,type,notes,km_fait,cout,technicien,statut,date_prevue) VALUES (?,?,'vidange',?,?,?,?,'termine',CURDATE())")
+               ->execute([$tenantId, $vId, $notes, $kmFait, $cout, $tech]);
+
+            // Charge si coût
+            if ($cout && $cout > 0) {
+                $db->prepare("INSERT INTO charges (tenant_id,vehicule_id,type,libelle,montant,date_charge) VALUES (?,?,'maintenance',?,?,CURDATE())")
+                   ->execute([$tenantId, $vId, 'Vidange — ' . $veh['nom'], $cout]);
+            }
+
+            // MAJ km véhicule
+            $db->prepare("UPDATE vehicules SET kilometrage_actuel = GREATEST(kilometrage_actuel, ?) WHERE id=? AND tenant_id=?")
+               ->execute([$kmFait, $vId, $tenantId]);
+
+            // Planifier prochaine vidange
+            $nextKm = $kmFait + $kmInter;
+            $db->prepare("INSERT INTO maintenances (tenant_id,vehicule_id,type,notes,km_prevu,statut) VALUES (?,?,'vidange',?,?,'planifie')")
+               ->execute([$tenantId, $vId, "Auto-planifiée (intervalle {$kmInter} km)", $nextKm]);
+            $db->prepare("UPDATE vehicules SET prochaine_vidange_km=? WHERE id=? AND tenant_id=?")
+               ->execute([$nextKm, $vId, $tenantId]);
+
+            logActivite($db, 'CREATE', 'maintenances', "Vidange effectuée — véhicule #{$vId} à {$kmFait} km");
+            setFlash(FLASH_SUCCESS, "Vidange enregistrée à " . number_format($kmFait, 0, ',', ' ') . " km. Prochaine planifiée à " . number_format($nextKm, 0, ',', ' ') . " km.");
+        } else {
+            setFlash(FLASH_ERROR, 'Données invalides.');
+        }
+        redirect($redirTab('alertes'));
     }
 }
 
@@ -747,7 +790,10 @@ function docLabel(string $d, string $today, string $in30): string {
     <?php else: ?>
 
     <?php if (!empty($vehAlertes)): ?>
-    <h4 style="font-size:.78rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.07em;margin:0 0 10px">Documents &amp; Vidanges véhicule</h4>
+    <div style="display:flex;align-items:center;gap:8px;margin:0 0 12px">
+        <h4 style="font-size:.82rem;color:#64748b;text-transform:uppercase;letter-spacing:.07em;margin:0"><i class="fas fa-id-card" style="color:#d97706"></i> Documents à renouveler</h4>
+        <span style="background:#fef3c7;color:#b45309;padding:2px 8px;border-radius:99px;font-size:.65rem;font-weight:700"><?= count($vehAlertes) ?></span>
+    </div>
     <?php foreach ($vehAlertes as $va):
         $kmA = (int)$va['kilometrage_actuel'];
         $kvR = $va['prochaine_vidange_km'] ? ((int)$va['prochaine_vidange_km'] - $kmA) : null;
@@ -762,7 +808,7 @@ function docLabel(string $d, string $today, string $in30): string {
         <div class="al-ico" style="background:<?= $isUrgentAl?'#fee2e2':'#fef3c7' ?>;color:<?= $isUrgentAl?'#ef4444':'#d97706' ?>">
             <i class="fas fa-car"></i>
         </div>
-        <div style="flex:1">
+        <div style="flex:1;min-width:0">
             <div style="font-weight:700;font-size:.88rem">
                 <a href="?vehicule_id=<?= $va['id'] ?>&tab=alertes" style="color:#0f172a;text-decoration:none"><?= sanitize($va['nom']) ?></a>
                 <span style="color:#94a3b8;font-size:.75rem;font-weight:400;margin-left:6px"><?= sanitize($va['immatriculation']) ?></span>
@@ -788,13 +834,36 @@ function docLabel(string $d, string $today, string $in30): string {
                 <?php endif ?>
             </div>
         </div>
-        <a href="<?= BASE_URL ?>app/vehicules/detail.php?id=<?= $va['id'] ?>" class="btn btn-ghost btn-sm" title="Fiche véhicule"><i class="fas fa-eye"></i></a>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center">
+            <?php if ($assExpire): ?>
+            <button class="btn btn-sm" style="background:#dbeafe;color:#1d4ed8;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.72rem;font-weight:600;white-space:nowrap"
+                    onclick="ouvrirRenouvellement(<?= $va['id'] ?>, '<?= addslashes(sanitize($va['nom'])) ?>', 'assurance', '<?= $va['date_expiration_assurance'] ?>')">
+                <i class="fas fa-shield-halved"></i> Renouveler assurance
+            </button>
+            <?php endif ?>
+            <?php if ($vigExpire): ?>
+            <button class="btn btn-sm" style="background:#ede9fe;color:#7c3aed;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.72rem;font-weight:600;white-space:nowrap"
+                    onclick="ouvrirRenouvellement(<?= $va['id'] ?>, '<?= addslashes(sanitize($va['nom'])) ?>', 'vignette', '<?= $va['date_expiration_vignette'] ?>')">
+                <i class="fas fa-stamp"></i> Renouveler vignette
+            </button>
+            <?php endif ?>
+            <?php if ($vidDue): ?>
+            <button class="btn btn-sm" style="background:#d1fae5;color:#059669;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.72rem;font-weight:600;white-space:nowrap"
+                    onclick="ouvrirVidangeRapide(<?= $va['id'] ?>, '<?= addslashes(sanitize($va['nom'])) ?>', <?= $kmA ?>, <?= (int)$va['prochaine_vidange_km'] ?>)">
+                <i class="fas fa-oil-can"></i> Vidange faite
+            </button>
+            <?php endif ?>
+            <a href="<?= BASE_URL ?>app/vehicules/detail.php?id=<?= $va['id'] ?>" class="btn btn-sm btn-ghost" title="Fiche véhicule" style="padding:5px 8px"><i class="fas fa-eye"></i></a>
+        </div>
     </div>
     <?php endforeach ?>
     <?php endif ?>
 
     <?php if (!empty($maintUrgentes)): ?>
-    <h4 style="font-size:.78rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.07em;margin:14px 0 10px">Maintenances urgentes</h4>
+    <div style="display:flex;align-items:center;gap:8px;margin:16px 0 12px">
+        <h4 style="font-size:.82rem;color:#64748b;text-transform:uppercase;letter-spacing:.07em;margin:0"><i class="fas fa-wrench" style="color:#ef4444"></i> Maintenances en retard</h4>
+        <span style="background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:99px;font-size:.65rem;font-weight:700"><?= count($maintUrgentes) ?></span>
+    </div>
     <?php foreach ($maintUrgentes as $mu):
         $tm = $typesMaint[$mu['type']] ?? ['label'=>ucfirst($mu['type']),'icon'=>'fa-wrench'];
         $kmU = (int)$mu['kilometrage_actuel'];
@@ -802,22 +871,35 @@ function docLabel(string $d, string $today, string $in30): string {
     ?>
     <div class="al-card urgent">
         <div class="al-ico" style="background:#fee2e2;color:#ef4444"><i class="fas <?= $tm['icon'] ?>"></i></div>
-        <div style="flex:1">
+        <div style="flex:1;min-width:0">
             <div style="font-weight:700;font-size:.88rem"><?= $tm['label'] ?> — <?= sanitize($mu['veh_nom']) ?> <span style="color:#94a3b8;font-weight:400;font-size:.75rem"><?= sanitize($mu['immatriculation']) ?></span></div>
             <div style="font-size:.78rem;color:#64748b;margin-top:3px">
                 <?php if ($kmRU !== null): ?>
-                Km dépassé de <strong style="color:#ef4444"><?= number_format(abs(min($kmRU,0)),0,',',' ') ?> km</strong> — Actuel: <?= number_format($kmU,0,',',' ') ?> km / Prévu: <?= number_format((int)$mu['km_prevu'],0,',',' ') ?> km
+                <?php if ($kmRU <= 0): ?>
+                Dépassé de <strong style="color:#ef4444"><?= number_format(abs($kmRU),0,',',' ') ?> km</strong> — Actuel: <?= number_format($kmU,0,',',' ') ?> km / Prévu: <?= number_format((int)$mu['km_prevu'],0,',',' ') ?> km
+                <?php else: ?>
+                Dans <strong style="color:#d97706"><?= number_format($kmRU,0,',',' ') ?> km</strong> — Actuel: <?= number_format($kmU,0,',',' ') ?> km
+                <?php endif ?>
                 <?php endif ?>
                 <?php if ($mu['date_prevue'] && $mu['date_prevue'] < $today): ?>
                 · Prévue le <?= formatDate($mu['date_prevue']) ?>
                 <?php endif ?>
+                <?php if ($mu['cout'] > 0): ?> · Coût estimé: <strong><?= formatMoney((float)$mu['cout']) ?></strong><?php endif ?>
                 <?php if ($mu['notes']): ?><br><span style="color:#94a3b8"><?= sanitize(mb_substr($mu['notes'],0,80)) ?></span><?php endif ?>
             </div>
         </div>
-        <button class="btn btn-sm" style="background:#d1fae5;color:#059669;border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:.78rem"
-                onclick="ouvrirTerminer(<?= $mu['id'] ?>, '<?= addslashes($tm['label']) ?>', <?= (int)$mu['km_prevu'] ?: (int)$kmU ?>, <?= (int)$mu['km_prevu'] > 0 ? 1 : 0 ?>)">
-            <i class="fas fa-check"></i> Terminer
-        </button>
+        <div style="display:flex;gap:5px;align-items:center">
+            <button class="btn btn-sm" style="background:#d1fae5;color:#059669;border:none;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:.78rem;font-weight:600"
+                    onclick="ouvrirTerminer(<?= $mu['id'] ?>, '<?= addslashes($tm['label']) ?>', <?= (int)$mu['km_prevu'] ?: $kmU ?>, <?= (int)$mu['km_prevu'] > 0 ? 1 : 0 ?>)">
+                <i class="fas fa-check"></i> Terminer
+            </button>
+            <form method="POST" style="display:inline" onsubmit="return confirm('Supprimer cette maintenance ?')">
+                <?= csrfField() ?>
+                <input type="hidden" name="action" value="supprimer_maintenance">
+                <input type="hidden" name="id" value="<?= $mu['id'] ?>">
+                <button class="btn btn-sm" style="background:#fff1f2;color:#ef4444;border:none;width:28px;height:28px;border-radius:6px;cursor:pointer" title="Supprimer"><i class="fas fa-trash"></i></button>
+            </form>
+        </div>
     </div>
     <?php endforeach ?>
     <?php endif ?>
@@ -1031,6 +1113,93 @@ function docLabel(string $d, string $today, string $in30): string {
     </div>
 </div>
 
+<!-- Modal Renouveler document (assurance/vignette) -->
+<div id="modal-renouveler" class="modal-overlay">
+    <div class="modal" style="max-width:480px">
+        <div class="modal-header">
+            <h3 id="renew-title"><i class="fas fa-shield-halved" style="color:#0d9488"></i> Renouveler</h3>
+            <button class="modal-close" onclick="closeModal('modal-renouveler')">&times;</button>
+        </div>
+        <form method="POST" style="padding:20px">
+            <?= csrfField() ?>
+            <input type="hidden" name="action" value="ajouter_charge">
+            <input type="hidden" name="vehicule_id" id="renew-veh-id">
+            <input type="hidden" name="type" id="renew-type">
+            <div id="renew-info" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:.82rem"></div>
+            <div class="form-row cols-2">
+                <div class="form-group">
+                    <label class="form-label">Montant payé (FCFA) <span style="color:red">*</span></label>
+                    <input type="number" name="montant" class="form-control" min="1" step="1" placeholder="Ex: 150 000" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Date du paiement</label>
+                    <input type="date" name="date_charge" class="form-control" value="<?= $today ?>">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label" id="renew-expiry-label">Nouvelle date d'expiration <span style="color:red">*</span></label>
+                <input type="date" name="date_expiration" class="form-control" required>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Libellé</label>
+                <input type="text" name="libelle" id="renew-libelle" class="form-control" placeholder="Ex: Prime assurance annuelle">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea name="notes" class="form-control" rows="2" placeholder="Numéro de police, assureur..."></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-ghost" onclick="closeModal('modal-renouveler')">Annuler</button>
+                <button type="submit" class="btn btn-primary"><i class="fas fa-check"></i> Enregistrer le renouvellement</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal Vidange rapide -->
+<div id="modal-vidange" class="modal-overlay">
+    <div class="modal" style="max-width:460px">
+        <div class="modal-header">
+            <h3><i class="fas fa-oil-can" style="color:#059669"></i> Vidange effectuée</h3>
+            <button class="modal-close" onclick="closeModal('modal-vidange')">&times;</button>
+        </div>
+        <form method="POST" style="padding:20px">
+            <?= csrfField() ?>
+            <input type="hidden" name="action" value="vidange_rapide">
+            <input type="hidden" name="vehicule_id" id="vid-veh-id">
+            <div id="vid-info" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:.82rem;color:#166534"></div>
+            <div class="form-row cols-2">
+                <div class="form-group">
+                    <label class="form-label">Km au compteur <span style="color:red">*</span></label>
+                    <input type="number" name="km_fait" id="vid-km" class="form-control" min="0" required>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Coût (FCFA)</label>
+                    <input type="number" name="cout" class="form-control" min="0" step="1" placeholder="0">
+                </div>
+            </div>
+            <div class="form-row cols-2">
+                <div class="form-group">
+                    <label class="form-label">Technicien</label>
+                    <input type="text" name="technicien" class="form-control" placeholder="Nom du mécanicien">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Prochaine vidange dans (km)</label>
+                    <input type="number" name="km_intervalle" class="form-control" min="1000" step="500" value="5000" placeholder="5000">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Notes</label>
+                <textarea name="notes" class="form-control" rows="2" placeholder="Type d'huile, filtre changé..."></textarea>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-ghost" onclick="closeModal('modal-vidange')">Annuler</button>
+                <button type="submit" class="btn btn-primary" style="background:#059669"><i class="fas fa-check"></i> Enregistrer la vidange</button>
+            </div>
+        </form>
+    </div>
+</div>
+
 <?php
 $extraJs = <<<'JS'
 function onTypeChange(v) {
@@ -1109,6 +1278,22 @@ function ouvrirTerminer(id, label, kmSuggest, isKm) {
 }
 function togglePlanNext(checked) {
     document.getElementById('mt-term-plan-fields').style.display = checked ? '' : 'none';
+}
+function ouvrirRenouvellement(vehId, vehNom, type, dateExp) {
+    document.getElementById('renew-veh-id').value = vehId;
+    document.getElementById('renew-type').value = type;
+    var isAss = type === 'assurance';
+    document.getElementById('renew-title').innerHTML = '<i class="fas ' + (isAss ? 'fa-shield-halved' : 'fa-stamp') + '" style="color:' + (isAss ? '#0d9488' : '#7c3aed') + '"></i> Renouveler ' + (isAss ? "l'assurance" : 'la vignette');
+    document.getElementById('renew-info').innerHTML = '<strong>' + vehNom + '</strong> — ' + (isAss ? 'Assurance' : 'Vignette') + ' expir' + (dateExp < new Date().toISOString().slice(0,10) ? 'ée' : 'e') + ' le <strong>' + dateExp.split('-').reverse().join('/') + '</strong>';
+    document.getElementById('renew-expiry-label').textContent = "Nouvelle date d'expiration " + (isAss ? "de l'assurance" : "de la vignette");
+    document.getElementById('renew-libelle').value = isAss ? "Renouvellement assurance" : "Renouvellement vignette";
+    openModal('modal-renouveler');
+}
+function ouvrirVidangeRapide(vehId, vehNom, kmActuel, kmPrevu) {
+    document.getElementById('vid-veh-id').value = vehId;
+    document.getElementById('vid-km').value = kmActuel;
+    document.getElementById('vid-info').innerHTML = '<strong>' + vehNom + '</strong> — Km actuel: <strong>' + kmActuel.toLocaleString('fr-FR') + '</strong> / Vidange prévue à: <strong>' + kmPrevu.toLocaleString('fr-FR') + ' km</strong>';
+    openModal('modal-vidange');
 }
 // Init km display if vehicle pre-selected + init type if pre-selected from URL
 document.addEventListener('DOMContentLoaded', function() {
