@@ -19,7 +19,7 @@ define('APP_DESCRIPTION', 'Plateforme SaaS de gestion de flotte & tracking GPS')
 define('DEVISE',          'FCFA');
 
 // Traccar GPS
-define('TRACCAR_URL',     'http://localhost:8082/api');
+define('TRACCAR_URL', getenv('TRACCAR_URL') ?: 'http://localhost:8082/api');
 define('TRACCAR_USER',    'mabeawilfried@gmail.com');
 define('TRACCAR_PASS',    '07459376ab@');
 
