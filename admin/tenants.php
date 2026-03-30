@@ -34,30 +34,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
         if ($action === 'activer_compte') {
-            $forfait = $_POST['forfait'] ?? 'mensuel';
-            $duree   = $forfait === 'annuel' ? 365 : 30;
-            $prix    = $forfait === 'annuel' ? 150000 : 20000;
-            $db->prepare("UPDATE tenants SET actif=1, plan=?, updated_at=NOW() WHERE id=?")->execute([$forfait, $tid]);
-            $db->prepare("UPDATE abonnements SET statut='expire' WHERE tenant_id=? AND statut='actif'")->execute([$tid]);
-            $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,$forfait,$prix,$duree]);
-            try { $db->prepare("INSERT INTO mouvements_abo (tenant_id,type,montant,description,created_by) VALUES (?,?,?,?,?)")->execute([$tid,'renouvellement',$prix,"Activation forfait $forfait",getUserId()]); } catch(\Throwable $e){}
-            setFlash(FLASH_SUCCESS, 'Compte activé — forfait ' . $forfait . '.');
+            try {
+                $forfait = $_POST['forfait'] ?? 'mensuel';
+                $duree   = $forfait === 'annuel' ? 365 : 30;
+                $prix    = $forfait === 'annuel' ? 150000 : 20000;
+                $db->prepare("UPDATE tenants SET actif=1, plan=? WHERE id=?")->execute([$forfait, $tid]);
+                $db->prepare("UPDATE abonnements SET statut='expire' WHERE tenant_id=? AND statut='actif'")->execute([$tid]);
+                $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,$forfait,$prix,$duree]);
+                try { $db->prepare("INSERT INTO mouvements_abo (tenant_id,type,montant,description,created_by) VALUES (?,?,?,?,?)")->execute([$tid,'renouvellement',$prix,"Activation forfait $forfait",getUserId()]); } catch(\Throwable $e){}
+                setFlash(FLASH_SUCCESS, 'Compte activé — forfait ' . $forfait . '.');
+            } catch(\Throwable $e) {
+                error_log("ACTIVATION ERROR tenant $tid: " . $e->getMessage());
+                setFlash(FLASH_ERROR, 'Erreur: ' . $e->getMessage());
+            }
         }
         if ($action === 'prolonger_abo') {
-            $forfait = $_POST['forfait_prolonger'] ?? 'mensuel';
-            $duree   = $forfait === 'annuel' ? 365 : 30;
-            $prix    = $forfait === 'annuel' ? 150000 : 20000;
-            $exist = $db->prepare("SELECT id FROM abonnements WHERE tenant_id=? AND statut='actif' LIMIT 1");
-            $exist->execute([$tid]);
-            $existId = $exist->fetchColumn();
-            if ($existId) {
-                $db->prepare("UPDATE abonnements SET date_fin=DATE_ADD(date_fin,INTERVAL ? DAY),updated_at=NOW() WHERE id=?")->execute([$duree,$existId]);
-            } else {
-                $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,$forfait,$prix,$duree]);
+            try {
+                $forfait = $_POST['forfait_prolonger'] ?? 'mensuel';
+                $duree   = $forfait === 'annuel' ? 365 : 30;
+                $prix    = $forfait === 'annuel' ? 150000 : 20000;
+                $exist = $db->prepare("SELECT id FROM abonnements WHERE tenant_id=? AND statut='actif' LIMIT 1");
+                $exist->execute([$tid]);
+                $existId = $exist->fetchColumn();
+                if ($existId) {
+                    $db->prepare("UPDATE abonnements SET date_fin=DATE_ADD(date_fin,INTERVAL ? DAY) WHERE id=?")->execute([$duree,$existId]);
+                } else {
+                    $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,$forfait,$prix,$duree]);
+                }
+                $db->prepare("UPDATE tenants SET plan=? WHERE id=?")->execute([$forfait,$tid]);
+                try { $db->prepare("INSERT INTO mouvements_abo (tenant_id,type,montant,description,created_by) VALUES (?,?,?,?,?)")->execute([$tid,'renouvellement',$prix,"Renouvellement forfait $forfait",getUserId()]); } catch(\Throwable $e){}
+                setFlash(FLASH_SUCCESS, 'Abonnement renouvelé — forfait ' . $forfait . '.');
+            } catch(\Throwable $e) {
+                error_log("PROLONGATION ERROR tenant $tid: " . $e->getMessage());
+                setFlash(FLASH_ERROR, 'Erreur: ' . $e->getMessage());
             }
-            $db->prepare("UPDATE tenants SET plan=? WHERE id=?")->execute([$forfait,$tid]);
-            try { $db->prepare("INSERT INTO mouvements_abo (tenant_id,type,montant,description,created_by) VALUES (?,?,?,?,?)")->execute([$tid,'renouvellement',$prix,"Renouvellement forfait $forfait",getUserId()]); } catch(\Throwable $e){}
-            setFlash(FLASH_SUCCESS, 'Abonnement renouvelé — forfait ' . $forfait . '.');
         }
     }
     redirect(BASE_URL . 'admin/tenants.php?' . http_build_query(array_filter(['q'=>$_GET['q']??'','statut'=>$_GET['statut']??'','page'=>$_GET['page']??''])));
