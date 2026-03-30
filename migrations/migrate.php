@@ -209,7 +209,7 @@ CREATE TABLE `chauffeurs` (
     `adresse`           TEXT DEFAULT NULL,
     `statut`            ENUM('actif','inactif') NOT NULL DEFAULT 'actif',
     `photo`             VARCHAR(255) DEFAULT NULL,
-    `type_chauffeur`    VARCHAR(30) DEFAULT 'interne',
+    `type_chauffeur`    VARCHAR(30) DEFAULT 'location',
     `vehicule_id`       INT DEFAULT NULL,
     `notes`             TEXT DEFAULT NULL,
     `created_at`        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

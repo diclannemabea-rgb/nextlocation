@@ -70,7 +70,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     $vehiculeId  = (int)($_POST['vehicule_id'] ?? 0) ?: null;
-    $typeChauffeur = trim($_POST['type_chauffeur'] ?? 'interne');
+    $typeChauffeur = trim($_POST['type_chauffeur'] ?? 'location');
 
     $db->prepare("
         UPDATE chauffeurs SET
