@@ -21,9 +21,9 @@ define('APP_DESCRIPTION', 'Plateforme SaaS de gestion de flotte & tracking GPS')
 define('DEVISE',          'FCFA');
 
 // Traccar GPS
-define('TRACCAR_URL', getenv('TRACCAR_URL') ?: 'http://localhost:8082/api');
-define('TRACCAR_USER',    'mabeawilfried@gmail.com');
-define('TRACCAR_PASS',    '07459376ab@');
+define('TRACCAR_URL',  getenv('TRACCAR_URL')  ?: 'http://localhost:8082/api');
+define('TRACCAR_USER', getenv('TRACCAR_USER') ?: 'mabeawilfried@gmail.com');
+define('TRACCAR_PASS', getenv('TRACCAR_PASS') ?: '07459376Ab@');
 
 // Session
 define('SESSION_TIMEOUT', 2592000); // 30 jours
