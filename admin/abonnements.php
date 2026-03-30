@@ -87,9 +87,9 @@ $totalPages = (int)ceil($total/$perPage);
 
 $stmt = $db->prepare("
     SELECT t.id, t.nom_entreprise, t.telephone, t.actif, t.plan,
-           u.email, u.password_plain,
+           u.email,
            a.id abo_id, a.plan abo_plan, a.prix abo_prix, a.date_debut, a.date_fin, a.statut abo_statut,
-           COALESCE((SELECT SUM(montant) FROM mouvements_abo m WHERE m.tenant_id=t.id AND m.type='paiement'),0) total_paye,
+           0 total_paye,
            DATEDIFF(a.date_fin,CURDATE()) jours_restants
     FROM tenants t
     LEFT JOIN users u ON u.tenant_id=t.id AND u.role='tenant_admin'
@@ -110,10 +110,14 @@ $kpi = $db->query("
         SUM(t.actif=0) en_attente,
         (SELECT COUNT(*) FROM abonnements WHERE statut='actif' AND date_fin>=CURDATE()) actifs,
         (SELECT COUNT(*) FROM abonnements WHERE statut='actif' AND date_fin BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 30 DAY)) expirant,
-        (SELECT COALESCE(SUM(montant),0) FROM mouvements_abo WHERE type='paiement' AND MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE())) revenus_mois,
-        (SELECT COALESCE(SUM(montant),0) FROM mouvements_abo WHERE type='paiement' AND YEAR(created_at)=YEAR(CURDATE())) revenus_annee
+        0 revenus_mois,
+        0 revenus_annee
     FROM tenants t
 ")->fetch(PDO::FETCH_ASSOC);
+try {
+    $rev = $db->query("SELECT COALESCE(SUM(CASE WHEN MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE()) THEN montant ELSE 0 END),0) revenus_mois, COALESCE(SUM(CASE WHEN YEAR(created_at)=YEAR(CURDATE()) THEN montant ELSE 0 END),0) revenus_annee FROM mouvements_abo WHERE type='paiement'")->fetch(PDO::FETCH_ASSOC);
+    $kpi['revenus_mois'] = $rev['revenus_mois']; $kpi['revenus_annee'] = $rev['revenus_annee'];
+} catch(\Throwable $e) {}
 
 function aboPagUrl(int $p): string { $q=$_GET;$q['page']=$p;return '?'.http_build_query($q); }
 
@@ -262,9 +266,6 @@ require_once BASE_PATH . '/includes/header.php';
         </td>
         <td>
             <div style="font-size:.78rem;color:#475569"><?= sanitize($a['email']??'') ?></div>
-            <?php if (!empty($a['password_plain'])): ?>
-            <div style="margin-top:3px"><span class="pwd-cell"><?= sanitize($a['password_plain']) ?></span></div>
-            <?php endif ?>
         </td>
         <td>
             <?php $ap = $a['abo_plan'] ?? '';

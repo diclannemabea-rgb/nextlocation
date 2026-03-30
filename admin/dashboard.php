@@ -69,14 +69,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 // ── DONNÉES ───────────────────────────────────────────────────────────────────
 $statsTenants = $db->query("SELECT COUNT(*) total, SUM(actif=1) actifs, SUM(actif=0) inactifs FROM tenants")->fetch(PDO::FETCH_ASSOC);
 $nbVehicules  = (int)$db->query("SELECT COUNT(*) FROM vehicules")->fetchColumn();
-$revenusMois  = (float)$db->query("SELECT COALESCE(SUM(montant),0) FROM mouvements_abo WHERE type='paiement' AND MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE())")->fetchColumn();
-$revenusAnnee = (float)$db->query("SELECT COALESCE(SUM(montant),0) FROM mouvements_abo WHERE type='paiement' AND YEAR(created_at)=YEAR(CURDATE())")->fetchColumn();
+$revenusMois = 0; $revenusAnnee = 0;
+try {
+    $revenusMois  = (float)$db->query("SELECT COALESCE(SUM(montant),0) FROM mouvements_abo WHERE type='paiement' AND MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE())")->fetchColumn();
+    $revenusAnnee = (float)$db->query("SELECT COALESCE(SUM(montant),0) FROM mouvements_abo WHERE type='paiement' AND YEAR(created_at)=YEAR(CURDATE())")->fetchColumn();
+} catch(\Throwable $e) {}
 $nbExpirant7  = (int)$db->query("SELECT COUNT(*) FROM abonnements WHERE statut='actif' AND date_fin BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 7 DAY)")->fetchColumn();
 $nouveauxMois = (int)$db->query("SELECT COUNT(*) FROM tenants WHERE MONTH(created_at)=MONTH(CURDATE()) AND YEAR(created_at)=YEAR(CURDATE())")->fetchColumn();
 
 // Comptes en attente
 $comptesPendants = $db->query("
-    SELECT t.*, u.nom user_nom, u.prenom user_prenom, u.email user_email, u.password_plain user_password
+    SELECT t.*, u.nom user_nom, u.prenom user_prenom, u.email user_email
     FROM tenants t
     LEFT JOIN users u ON u.tenant_id=t.id AND u.role='tenant_admin'
     WHERE t.actif=0
@@ -87,7 +90,7 @@ $nbPendants = count($comptesPendants);
 
 // Dernières inscriptions (actifs)
 $derniersTenants = $db->query("
-    SELECT t.*, u.email user_email, u.password_plain user_password,
+    SELECT t.*, u.email user_email,
            (SELECT COUNT(*) FROM vehicules v WHERE v.tenant_id=t.id) nb_vehicules,
            a.plan abo_plan, a.date_fin abo_fin
     FROM tenants t
@@ -230,9 +233,6 @@ require_once BASE_PATH . '/includes/header.php';
         </td>
         <td>
             <div style="font-size:.78rem;color:#475569"><?= sanitize($t['user_email']??'') ?></div>
-            <?php if (!empty($t['user_password'])): ?>
-            <div style="margin-top:3px"><span class="pwd-cell"><?= sanitize($t['user_password']) ?></span></div>
-            <?php endif ?>
         </td>
         <td>
             <?php echo match($t['type_usage']??'les_deux') {
@@ -333,9 +333,6 @@ require_once BASE_PATH . '/includes/header.php';
         </td>
         <td>
             <div style="font-size:.78rem;color:#475569"><?= sanitize($t['user_email']??'') ?></div>
-            <?php if (!empty($t['user_password'])): ?>
-            <div style="margin-top:3px"><span class="pwd-cell"><?= sanitize($t['user_password']) ?></span></div>
-            <?php endif ?>
         </td>
         <td>
             <?php $plan = $t['abo_plan'] ?? $t['plan'] ?? '—';
