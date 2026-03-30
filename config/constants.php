@@ -7,11 +7,9 @@
 define('UPLOAD_PATH',     BASE_PATH . '/uploads/');
 // Détection automatique du protocole (http en local, https en production)
 if (!defined('BASE_URL')) {
-    $proto    = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $host     = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    // Nom du dossier racine du projet (traccargps en local, fleetoo en prod)
-    $rootDir  = basename(dirname(__DIR__)); // dirname(__DIR__) = dossier du projet
-    define('BASE_URL', $proto . '://' . $host . '/' . $rootDir . '/');
+    $proto = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host  = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    define('BASE_URL', $proto . '://' . $host . '/');
 }
 
 // Application
