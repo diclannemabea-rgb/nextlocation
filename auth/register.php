@@ -154,7 +154,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } catch (Exception $e) {
                         $db->rollBack();
                         error_log('Register error: ' . $e->getMessage());
-                        $errors[] = 'Une erreur est survenue lors de la creation du compte. Reessayez.';
+                        $errors[] = 'Erreur creation compte: ' . $e->getMessage();
                     }
                 }
             }
