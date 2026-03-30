@@ -103,9 +103,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     INSERT INTO paiements (tenant_id, location_id, montant, mode_paiement, notes, created_at)
                     VALUES (?, ?, ?, ?, 'Paiement solde retour', NOW())
                 ")->execute([$tenantId, $locationId, $paiementFinale, $modePaie]);
-                // Mettre à jour recettes_initiales du véhicule
-                $db->prepare("UPDATE vehicules SET recettes_initiales = COALESCE(recettes_initiales,0) + ? WHERE id = ? AND tenant_id = ?")
-                   ->execute([$paiementFinale, $loc['vehicule_id'], $tenantId]);
+                // Recettes calculées dynamiquement via SUM(paiements) — plus de cumul dans recettes_initiales
                 // Recalculer reste_a_payer et statut_paiement
                 $stmtTotal = $db->prepare("SELECT COALESCE(SUM(montant),0) FROM paiements WHERE location_id=? AND tenant_id=?");
                 $stmtTotal->execute([$locationId, $tenantId]);

@@ -75,9 +75,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $db->prepare("INSERT INTO charges (tenant_id,vehicule_id,type,libelle,montant,date_charge,notes,piece_jointe) VALUES (?,?,?,?,?,?,?,?)")
                ->execute([$tenantId, $vId, $type, $lib, $mont, $date, $notes ?: null, $pj]);
 
-            // ── Impacter les dépenses du véhicule ──────────────────────────
-            $db->prepare("UPDATE vehicules SET depenses_initiales = COALESCE(depenses_initiales,0) + ? WHERE id=? AND tenant_id=?")
-               ->execute([$mont, $vId, $tenantId]);
+            // Dépenses calculées dynamiquement via SUM(charges) — plus de cumul dans depenses_initiales
 
             // Mise à jour date expiration document
             if ($expiry && in_array($type, ['assurance','vignette'])) {
@@ -137,8 +135,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($coutReel && $coutReel > 0) {
                     $db->prepare("INSERT INTO charges (tenant_id,vehicule_id,type,libelle,montant,date_charge) VALUES (?,?,'maintenance',?,?,CURDATE())")
                        ->execute([$tenantId, $vId, $lbl, $coutReel]);
-                    $db->prepare("UPDATE vehicules SET depenses_initiales = COALESCE(depenses_initiales,0) + ? WHERE id=? AND tenant_id=?")
-                       ->execute([$coutReel, $vId, $tenantId]);
                 }
                 if ($kmFait) {
                     $db->prepare("UPDATE vehicules SET kilometrage_actuel=? WHERE id=? AND tenant_id=? AND kilometrage_actuel < ?")
@@ -181,9 +177,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $lbl = ($typesMaint[$maint['type']]['label'] ?? ucfirst($maint['type'])) . ($notes ? " — $notes" : '');
                 $db->prepare("INSERT INTO charges (tenant_id,vehicule_id,type,libelle,montant,date_charge) VALUES (?,?,'maintenance',?,?,CURDATE())")
                    ->execute([$tenantId, $maint['vehicule_id'], $lbl, $coutReel]);
-                // ── Impacter les dépenses du véhicule ──────────────────────
-                $db->prepare("UPDATE vehicules SET depenses_initiales = COALESCE(depenses_initiales,0) + ? WHERE id=? AND tenant_id=?")
-                   ->execute([$coutReel, $maint['vehicule_id'], $tenantId]);
             }
             // Mettre à jour km véhicule si km_fait fourni
             if ($kmFait) {

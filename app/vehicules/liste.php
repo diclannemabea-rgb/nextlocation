@@ -288,10 +288,12 @@ function vidangeAlert(array $v): string {
     $capital    = (float)($v['capital_investi']    ?? 0);
     $recettes   = (float)($v['total_recettes']    ?? 0);
     $depenses   = (float)($v['total_depenses']    ?? 0);
-    $recInit    = 0;
-    $depInit    = 0;
+    $recInit    = (float)($v['recettes_initiales'] ?? 0);
+    $depInit    = (float)($v['depenses_initiales'] ?? 0);
     $recCumul   = $recettes;
     $depCumul   = $depenses;
+    $recettes   = $recInit + $recCumul;
+    $depenses   = $depInit + $depCumul;
     $benefice   = $recettes - $depenses - $capital;
     $roi        = $capital > 0 ? ($benefice / $capital * 100) : 0;
     $km        = (int)($v['kilometrage_actuel'] ?? 0);
@@ -390,8 +392,10 @@ function vidangeAlert(array $v): string {
         <span style="font-size:.78rem" class="<?= $recettes > 0 ? 'fin-pos' : 'fin-muted' ?>">
             <?= $recettes > 0 ? formatMoney($recettes) : '—' ?>
         </span>
-        <?php if ($recInit > 0): ?>
-        <br><span style="font-size:.65rem;color:#94a3b8"><?= formatMoney($recInit) ?> init</span>
+        <?php if ($recInit > 0 && $recCumul > 0): ?>
+        <br><span style="font-size:.6rem;color:#94a3b8"><?= formatMoney($recInit) ?> init + <?= formatMoney($recCumul) ?></span>
+        <?php elseif ($recInit > 0): ?>
+        <br><span style="font-size:.6rem;color:#94a3b8"><?= formatMoney($recInit) ?> init</span>
         <?php endif ?>
     </td>
 
@@ -400,8 +404,10 @@ function vidangeAlert(array $v): string {
         <span style="font-size:.78rem" class="<?= $depenses > 0 ? 'fin-neg' : 'fin-muted' ?>">
             <?= $depenses > 0 ? formatMoney($depenses) : '—' ?>
         </span>
-        <?php if ($depInit > 0): ?>
-        <br><span style="font-size:.65rem;color:#94a3b8"><?= formatMoney($depInit) ?> init</span>
+        <?php if ($depInit > 0 && $depCumul > 0): ?>
+        <br><span style="font-size:.6rem;color:#94a3b8"><?= formatMoney($depInit) ?> init + <?= formatMoney($depCumul) ?></span>
+        <?php elseif ($depInit > 0): ?>
+        <br><span style="font-size:.6rem;color:#94a3b8"><?= formatMoney($depInit) ?> init</span>
         <?php endif ?>
     </td>
 
