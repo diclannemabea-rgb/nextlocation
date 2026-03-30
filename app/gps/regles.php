@@ -142,18 +142,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $libelle .= ' — ' . $veh['nom'];
         }
 
+        // Action automatique
+        $actionAuto = $_POST['action_auto'] ?? 'notification_only';
+        if (!in_array($actionAuto, ['notification_only', 'couper_moteur', 'couper_moteur_et_notifier'])) {
+            $actionAuto = 'notification_only';
+        }
+
         if ($regleId) {
             // Mise à jour
             $chkR = $db->prepare("SELECT id FROM regles_gps WHERE id=? AND tenant_id=?");
             $chkR->execute([$regleId, $tenantId]);
             if (!$chkR->fetch()) { setFlash(FLASH_ERROR, 'Règle introuvable.'); redirect(BASE_URL . 'app/gps/regles.php'); }
-            $db->prepare("UPDATE regles_gps SET type_regle=?, libelle=?, params=?, actif=?, vehicule_id=? WHERE id=? AND tenant_id=?")
-               ->execute([$type, $libelle, json_encode($params), $actif, $vehiculeId, $regleId, $tenantId]);
+            $db->prepare("UPDATE regles_gps SET type_regle=?, libelle=?, params=?, actif=?, vehicule_id=?, action_auto=? WHERE id=? AND tenant_id=?")
+               ->execute([$type, $libelle, json_encode($params), $actif, $vehiculeId, $actionAuto, $regleId, $tenantId]);
             setFlash(FLASH_SUCCESS, 'Règle mise à jour.');
         } else {
             // Création
-            $db->prepare("INSERT INTO regles_gps (tenant_id, vehicule_id, type_regle, libelle, params, actif) VALUES (?,?,?,?,?,?)")
-               ->execute([$tenantId, $vehiculeId, $type, $libelle, json_encode($params), $actif]);
+            $db->prepare("INSERT INTO regles_gps (tenant_id, vehicule_id, type_regle, libelle, params, actif, action_auto) VALUES (?,?,?,?,?,?,?)")
+               ->execute([$tenantId, $vehiculeId, $type, $libelle, json_encode($params), $actif, $actionAuto]);
             setFlash(FLASH_SUCCESS, 'Règle créée avec succès.');
         }
     }
@@ -288,6 +294,12 @@ input:checked + .toggle-slider:before { transform:translateX(16px); }
     <span class="type-badge" style="background:<?= $def ? $def['color'] : '#94a3b8' ?>22;color:<?= $def ? $def['color'] : '#64748b' ?>">
         <i class="fas fa-globe" style="font-size:.6rem"></i> Global
     </span>
+    <?php if (($r['action_auto'] ?? 'notification_only') !== 'notification_only'): ?>
+    <span class="type-badge" style="background:#fee2e2;color:#dc2626">
+        <i class="fas fa-power-off" style="font-size:.6rem"></i>
+        <?= ($r['action_auto'] === 'couper_moteur') ? 'Auto-coupure' : 'Coupure + notif' ?>
+    </span>
+    <?php endif ?>
     <!-- Toggle actif/inactif -->
     <form method="POST" style="display:inline">
         <?= csrfField() ?>
@@ -335,6 +347,12 @@ input:checked + .toggle-slider:before { transform:translateX(16px); }
         <i class="fas fa-car" style="font-size:.6rem"></i>
         <?= sanitize($r['veh_nom']) ?> · <?= sanitize($r['immatriculation']) ?>
     </span>
+    <?php if (($r['action_auto'] ?? 'notification_only') !== 'notification_only'): ?>
+    <span class="type-badge" style="background:#fee2e2;color:#dc2626">
+        <i class="fas fa-power-off" style="font-size:.6rem"></i>
+        <?= ($r['action_auto'] === 'couper_moteur') ? 'Auto-coupure' : 'Coupure + notif' ?>
+    </span>
+    <?php endif ?>
     <form method="POST" style="display:inline">
         <?= csrfField() ?>
         <input type="hidden" name="action" value="toggle_regle">
@@ -407,6 +425,22 @@ input:checked + .toggle-slider:before { transform:translateX(16px); }
 
             <!-- Champs dynamiques selon le type -->
             <div id="champs-dynamiques"></div>
+
+            <!-- Action automatique -->
+            <div class="form-group">
+                <label class="form-label" style="font-size:.85rem">
+                    <i class="fas fa-bolt" style="color:#d97706"></i> Action automatique
+                </label>
+                <select name="action_auto" id="select-action-auto" class="form-control">
+                    <option value="notification_only">Notification uniquement (alerte dans le tableau)</option>
+                    <option value="couper_moteur">Couper le moteur automatiquement</option>
+                    <option value="couper_moteur_et_notifier">Couper le moteur + notification</option>
+                </select>
+                <div class="form-hint" id="action-auto-hint" style="margin-top:5px;display:none">
+                    <i class="fas fa-exclamation-triangle" style="color:#dc2626"></i>
+                    <strong style="color:#dc2626">Attention :</strong> le moteur sera coupé automatiquement dès que la règle est violée. Assurez-vous que le boîtier GPS supporte cette commande.
+                </div>
+            </div>
 
             <!-- Actif -->
             <div class="form-group" style="display:flex;align-items:center;gap:10px">
@@ -491,9 +525,19 @@ function editRegle(r) {
         });
         if (r.vehicule_id) document.getElementById('select-vehicule').value = r.vehicule_id;
         document.getElementById('toggle-actif').checked = r.actif == 1;
+        document.getElementById('select-action-auto').value = r.action_auto || 'notification_only';
+        updateActionHint();
     }, 50);
 
     openModal('modal-add-regle');
+}
+
+// Afficher l'avertissement quand coupure moteur sélectionnée
+document.getElementById('select-action-auto').addEventListener('change', updateActionHint);
+function updateActionHint() {
+    const sel = document.getElementById('select-action-auto');
+    const hint = document.getElementById('action-auto-hint');
+    hint.style.display = (sel.value !== 'notification_only') ? 'block' : 'none';
 }
 
 // Reset modal à la fermeture

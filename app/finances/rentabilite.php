@@ -97,23 +97,29 @@ $sDM->execute();
 $depMaint = (float)$sDM->fetchColumn();
 
 // ── Contraventions taxi ───────────────────────────────────────────────────────
-$sqlCT = "SELECT COALESCE(SUM(ct.montant),0) FROM contraventions_taxi ct
-          JOIN taximetres tx ON tx.id=ct.taximetre_id
-          WHERE ct.tenant_id=:t" . dateWhere('ct.date_contr');
-if ($filtreVid) $sqlCT .= " AND tx.vehicule_id=" . $filtreVid;
-$sCT = $db->prepare($sqlCT);
-$sCT->bindValue(':t', $tenantId);
-bindDate($sCT, $filtreFrom, $filtreTo);
-$sCT->execute();
-$depContr = (float)$sCT->fetchColumn();
+$depContr = 0;
+try {
+    $sqlCT = "SELECT COALESCE(SUM(ct.montant),0) FROM contraventions_taxi ct
+              JOIN taximetres tx ON tx.id=ct.taximetre_id
+              WHERE ct.tenant_id=:t" . dateWhere('ct.date_contr');
+    if ($filtreVid) $sqlCT .= " AND tx.vehicule_id=" . $filtreVid;
+    $sCT = $db->prepare($sqlCT);
+    $sCT->bindValue(':t', $tenantId);
+    bindDate($sCT, $filtreFrom, $filtreTo);
+    $sCT->execute();
+    $depContr = (float)$sCT->fetchColumn();
+} catch (Throwable $e) {}
 
 // ── Dépenses entreprise ───────────────────────────────────────────────────────
-$sqlDE = "SELECT COALESCE(SUM(montant),0) FROM depenses_entreprise WHERE tenant_id=:t" . dateWhere('date_depense');
-$sDE = $db->prepare($sqlDE);
-$sDE->bindValue(':t', $tenantId);
-bindDate($sDE, $filtreFrom, $filtreTo);
-$sDE->execute();
-$depEntreprise = (float)$sDE->fetchColumn();
+$depEntreprise = 0;
+try {
+    $sqlDE = "SELECT COALESCE(SUM(montant),0) FROM depenses_entreprise WHERE tenant_id=:t" . dateWhere('date_depense');
+    $sDE = $db->prepare($sqlDE);
+    $sDE->bindValue(':t', $tenantId);
+    bindDate($sDE, $filtreFrom, $filtreTo);
+    $sDE->execute();
+    $depEntreprise = (float)$sDE->fetchColumn();
+} catch (Throwable $e) {}
 
 // ── KPIs agrégés ──────────────────────────────────────────────────────────────
 $totalRec = $recLoc + $recTaxi;
@@ -158,11 +164,13 @@ $chMois = [];
 foreach ($sCHM->fetchAll(PDO::FETCH_ASSOC) as $r) $chMois[$r['m']] = (float)$r['v'];
 
 // Dépenses entreprise par mois
-$sDEM = $db->prepare("SELECT DATE_FORMAT(date_depense,'%Y-%m') m, COALESCE(SUM(montant),0) v
-    FROM depenses_entreprise WHERE tenant_id=? AND date_depense >= DATE_SUB(CURDATE(),INTERVAL 12 MONTH) GROUP BY m");
-$sDEM->execute([$tenantId]);
 $deMois = [];
-foreach ($sDEM->fetchAll(PDO::FETCH_ASSOC) as $r) $deMois[$r['m']] = (float)$r['v'];
+try {
+    $sDEM = $db->prepare("SELECT DATE_FORMAT(date_depense,'%Y-%m') m, COALESCE(SUM(montant),0) v
+        FROM depenses_entreprise WHERE tenant_id=? AND date_depense >= DATE_SUB(CURDATE(),INTERVAL 12 MONTH) GROUP BY m");
+    $sDEM->execute([$tenantId]);
+    foreach ($sDEM->fetchAll(PDO::FETCH_ASSOC) as $r) $deMois[$r['m']] = (float)$r['v'];
+} catch (Throwable $e) {}
 
 // Tableau 12 mois
 $perfMensuelle = [];
@@ -193,22 +201,28 @@ $sCTY->execute([$tenantId, $filtreFrom, $filtreTo]);
 $chargesType = $sCTY->fetchAll(PDO::FETCH_ASSOC);
 
 // Dépenses entreprise par catégorie
-$sDEC = $db->prepare("SELECT categorie, COALESCE(SUM(montant),0) total, COUNT(*) nb
-    FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ?
-    GROUP BY categorie ORDER BY total DESC");
-$sDEC->execute([$tenantId, $filtreFrom, $filtreTo]);
-$depEntCateg = $sDEC->fetchAll(PDO::FETCH_ASSOC);
+$depEntCateg = [];
+try {
+    $sDEC = $db->prepare("SELECT categorie, COALESCE(SUM(montant),0) total, COUNT(*) nb
+        FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ?
+        GROUP BY categorie ORDER BY total DESC");
+    $sDEC->execute([$tenantId, $filtreFrom, $filtreTo]);
+    $depEntCateg = $sDEC->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {}
 
 // ── Contraventions détail ─────────────────────────────────────────────────────
-$sContrDet = $db->prepare("SELECT ct.*, tx.nom t_nom, tx.prenom t_prenom, v.nom veh_nom, v.immatriculation
-    FROM contraventions_taxi ct
-    JOIN taximetres tx ON tx.id=ct.taximetre_id
-    JOIN vehicules v ON v.id=tx.vehicule_id
-    WHERE ct.tenant_id=? AND ct.date_contr BETWEEN ? AND ?
-    " . ($filtreVid ? "AND v.id=$filtreVid" : "") . "
-    ORDER BY ct.date_contr DESC LIMIT 20");
-$sContrDet->execute([$tenantId, $filtreFrom, $filtreTo]);
-$contraventions = $sContrDet->fetchAll(PDO::FETCH_ASSOC);
+$contraventions = [];
+try {
+    $sContrDet = $db->prepare("SELECT ct.*, tx.nom t_nom, tx.prenom t_prenom, v.nom veh_nom, v.immatriculation
+        FROM contraventions_taxi ct
+        JOIN taximetres tx ON tx.id=ct.taximetre_id
+        JOIN vehicules v ON v.id=tx.vehicule_id
+        WHERE ct.tenant_id=? AND ct.date_contr BETWEEN ? AND ?
+        " . ($filtreVid ? "AND v.id=$filtreVid" : "") . "
+        ORDER BY ct.date_contr DESC LIMIT 20");
+    $sContrDet->execute([$tenantId, $filtreFrom, $filtreTo]);
+    $contraventions = $sContrDet->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {}
 
 // ── Top clients ───────────────────────────────────────────────────────────────
 $sTopC = $db->prepare("SELECT c.nom, c.prenom, c.telephone, COUNT(l.id) nb_locs,
@@ -244,22 +258,25 @@ $creances = $sCreances->fetchAll(PDO::FETCH_ASSOC);
 $totalCreances = array_sum(array_column($creances, 'reste_a_payer'));
 
 // ── Dettes taximantres ────────────────────────────────────────────────────────
-$sDettes = $db->prepare("
-    SELECT tx.id, tx.nom, tx.prenom, v.nom veh_nom,
-           COALESCE(SUM(CASE WHEN pt.statut_jour='non_paye' THEN pt.montant ELSE 0 END),0) dette,
-           COUNT(CASE WHEN pt.statut_jour='non_paye' THEN 1 END) nb_jours_impaye,
-           COALESCE(SUM(ct.montant),0) contraventions_total
-    FROM taximetres tx
-    LEFT JOIN paiements_taxi pt ON pt.taximetre_id=tx.id AND pt.tenant_id=tx.tenant_id
-    LEFT JOIN vehicules v ON v.id=tx.vehicule_id
-    LEFT JOIN contraventions_taxi ct ON ct.taximetre_id=tx.id AND ct.statut='impayee'
-    WHERE tx.tenant_id=?
-    GROUP BY tx.id HAVING (dette > 0 OR contraventions_total > 0)
-    ORDER BY dette DESC");
-$sDettes->execute([$tenantId]);
-$dettesChauf = $sDettes->fetchAll(PDO::FETCH_ASSOC);
-$totalDettes = array_sum(array_column($dettesChauf, 'dette'));
-$totalContrDues = array_sum(array_column($dettesChauf, 'contraventions_total'));
+$dettesChauf = []; $totalDettes = 0; $totalContrDues = 0;
+try {
+    $sDettes = $db->prepare("
+        SELECT tx.id, tx.nom, tx.prenom, v.nom veh_nom,
+               COALESCE(SUM(CASE WHEN pt.statut_jour='non_paye' THEN pt.montant ELSE 0 END),0) dette,
+               COUNT(CASE WHEN pt.statut_jour='non_paye' THEN 1 END) nb_jours_impaye,
+               COALESCE(SUM(ct.montant),0) contraventions_total
+        FROM taximetres tx
+        LEFT JOIN paiements_taxi pt ON pt.taximetre_id=tx.id AND pt.tenant_id=tx.tenant_id
+        LEFT JOIN vehicules v ON v.id=tx.vehicule_id
+        LEFT JOIN contraventions_taxi ct ON ct.taximetre_id=tx.id AND ct.statut='impayee'
+        WHERE tx.tenant_id=?
+        GROUP BY tx.id HAVING (dette > 0 OR contraventions_total > 0)
+        ORDER BY dette DESC");
+    $sDettes->execute([$tenantId]);
+    $dettesChauf = $sDettes->fetchAll(PDO::FETCH_ASSOC);
+    $totalDettes = array_sum(array_column($dettesChauf, 'dette'));
+    $totalContrDues = array_sum(array_column($dettesChauf, 'contraventions_total'));
+} catch (Throwable $e) {}
 
 // ── Maintenances planifiées ───────────────────────────────────────────────────
 $sMaintPlan = $db->prepare("
@@ -298,12 +315,15 @@ $sStatL->execute([$tenantId]);
 $statLoc = $sStatL->fetch(PDO::FETCH_ASSOC);
 
 // ── Dépenses entreprise liste ─────────────────────────────────────────────────
-$sDepEnt = $db->prepare("SELECT de.*, u.nom created_nom FROM depenses_entreprise de
-    LEFT JOIN users u ON u.id=de.created_by
-    WHERE de.tenant_id=? AND de.date_depense BETWEEN ? AND ?
-    ORDER BY de.date_depense DESC LIMIT 20");
-$sDepEnt->execute([$tenantId, $filtreFrom, $filtreTo]);
-$depEntListe = $sDepEnt->fetchAll(PDO::FETCH_ASSOC);
+$depEntListe = [];
+try {
+    $sDepEnt = $db->prepare("SELECT de.*, u.nom created_nom FROM depenses_entreprise de
+        LEFT JOIN users u ON u.id=de.created_by
+        WHERE de.tenant_id=? AND de.date_depense BETWEEN ? AND ?
+        ORDER BY de.date_depense DESC LIMIT 20");
+    $sDepEnt->execute([$tenantId, $filtreFrom, $filtreTo]);
+    $depEntListe = $sDepEnt->fetchAll(PDO::FETCH_ASSOC);
+} catch (Throwable $e) {}
 
 // ── Caisse config ─────────────────────────────────────────────────────────────
 $sCaisse = $db->prepare("SELECT * FROM caisse_config WHERE tenant_id=?");
@@ -893,8 +913,8 @@ function exportExcel(PDO $db, int $tenantId, string $from, string $to, int $filt
     $recTaxi= recQuery($db, "SELECT COALESCE(SUM(pt.montant),0) FROM paiements_taxi pt JOIN taximetres tx ON tx.id=pt.taximetre_id WHERE pt.tenant_id=? AND pt.statut_jour='paye' AND pt.date_paiement BETWEEN ? AND ?", [$tenantId,$from,$to]);
     $depVeh = recQuery($db, "SELECT COALESCE(SUM(montant),0) FROM charges WHERE tenant_id=? AND date_charge BETWEEN ? AND ?", [$tenantId,$from,$to]);
     $depMnt = recQuery($db, "SELECT COALESCE(SUM(cout),0) FROM maintenances WHERE tenant_id=? AND statut='termine' AND date_prevue BETWEEN ? AND ?", [$tenantId,$from,$to]);
-    $depCt  = recQuery($db, "SELECT COALESCE(SUM(ct.montant),0) FROM contraventions_taxi ct JOIN taximetres tx ON tx.id=ct.taximetre_id WHERE ct.tenant_id=? AND ct.date_contr BETWEEN ? AND ?", [$tenantId,$from,$to]);
-    $depEnt = recQuery($db, "SELECT COALESCE(SUM(montant),0) FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ?", [$tenantId,$from,$to]);
+    try { $depCt  = recQuery($db, "SELECT COALESCE(SUM(ct.montant),0) FROM contraventions_taxi ct JOIN taximetres tx ON tx.id=ct.taximetre_id WHERE ct.tenant_id=? AND ct.date_contr BETWEEN ? AND ?", [$tenantId,$from,$to]); } catch (Throwable $e) { $depCt = 0; }
+    try { $depEnt = recQuery($db, "SELECT COALESCE(SUM(montant),0) FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ?", [$tenantId,$from,$to]); } catch (Throwable $e) { $depEnt = 0; }
     $totRec = $recLoc+$recTaxi;
     $totDep = $depVeh+$depMnt+$depCt+$depEnt;
 
@@ -982,19 +1002,22 @@ function exportExcel(PDO $db, int $tenantId, string $from, string $to, int $filt
         $ws4->getStyle('E'.$row)->getNumberFormat()->setFormatCode($moneyFmt);
         $row++;
     }
-    $sDE2 = $db->prepare("SELECT date_depense, categorie, libelle, montant, notes FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ?");
-    $sDE2->execute([$tenantId,$from,$to]);
-    foreach ($sDE2->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $writeRow($ws4, $row, [date('d/m/Y',strtotime($r['date_depense'])), 'entreprise/'.$r['categorie'], $r['libelle'], 'Entreprise', (float)$r['montant'], $r['notes']]);
-        $ws4->getStyle('E'.$row)->getNumberFormat()->setFormatCode($moneyFmt);
-        $row++;
-    }
+    try {
+        $sDE2 = $db->prepare("SELECT date_depense, categorie, libelle, montant, notes FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ?");
+        $sDE2->execute([$tenantId,$from,$to]);
+        foreach ($sDE2->fetchAll(PDO::FETCH_ASSOC) as $r) {
+            $writeRow($ws4, $row, [date('d/m/Y',strtotime($r['date_depense'])), 'entreprise/'.$r['categorie'], $r['libelle'], 'Entreprise', (float)$r['montant'], $r['notes']]);
+            $ws4->getStyle('E'.$row)->getNumberFormat()->setFormatCode($moneyFmt);
+            $row++;
+        }
+    } catch (Throwable $e) {}
     $autosize($ws4, 6);
 
     // ── Feuille 5 : Contraventions ────────────────────────────────────────────
     $ws5 = $sp->createSheet()->setTitle('Contraventions');
     $writeRow($ws5, 1, ['Date','Chauffeur','Véhicule','Montant','Description','Statut']);
     $ws5->getStyle('A1:F1')->applyFromArray($headerStyle);
+    try {
     $sCv = $db->prepare("SELECT ct.date_contr, CONCAT(tx.nom,' ',tx.prenom) chauffeur,
         v.nom veh, ct.montant, ct.description, ct.statut
         FROM contraventions_taxi ct JOIN taximetres tx ON tx.id=ct.taximetre_id
@@ -1007,6 +1030,7 @@ function exportExcel(PDO $db, int $tenantId, string $from, string $to, int $filt
         $ws5->getStyle('D'.$row)->getNumberFormat()->setFormatCode($moneyFmt);
         $row++;
     }
+    } catch (Throwable $e) { /* table contraventions_taxi peut ne pas exister */ }
     $autosize($ws5, 6);
 
     // ── Feuille 6 : Par véhicule (ROI) ───────────────────────────────────────

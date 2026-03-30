@@ -38,11 +38,16 @@ $totalNotifs   = 0;
 if (!isSuperAdmin() && isset($db)) {
     $tid = getTenantId();
 
-    // Événements GPS non lus
+    // Événements GPS non lus + alertes règles non lues
     try {
         $s = $db->prepare("SELECT COUNT(*) FROM evenements_gps WHERE tenant_id = ? AND lu = 0");
         $s->execute([$tid]);
         $nbAlertesGps = (int)$s->fetchColumn();
+    } catch (Throwable $e) {}
+    try {
+        $s = $db->prepare("SELECT COUNT(*) FROM alertes_regles WHERE tenant_id = ? AND lu = 0");
+        $s->execute([$tid]);
+        $nbAlertesGps += (int)$s->fetchColumn();
     } catch (Throwable $e) {}
 
     // Maintenances urgentes (date dépassée ou km seuil atteint)
@@ -496,16 +501,7 @@ window.IS_LOGGED_IN = true;
         </a>
     </div>
 
-    <!-- RAPPORTS -->
-    <div class="nav-section">
-        <div class="nav-section-title">Rapports</div>
-        <a href="<?= BASE_URL ?>app/rapports/journalier.php" class="nav-link<?= navActive('rapport_jour', $activePage) ?>">
-            <i class="fas fa-calendar-day"></i><span class="nav-link-text">Journalier</span>
-        </a>
-        <a href="<?= BASE_URL ?>app/rapports/mensuel.php" class="nav-link<?= navActive('rapport_mois', $activePage) ?>">
-            <i class="fas fa-calendar-alt"></i><span class="nav-link-text">Mensuel</span>
-        </a>
-    </div>
+    <!-- RAPPORTS supprimé — les données sont dans Finances > Rentabilité -->
 
     <!-- PARAMÈTRES -->
     <?php if (isTenantAdmin()): ?>

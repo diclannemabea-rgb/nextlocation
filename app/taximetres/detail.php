@@ -125,11 +125,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         logActivite($db, 'update', 'taximetres', "Saisie jour $date — $statut — taximantre #{$taxiId}");
         // Push notif
         $tNom = trim(($taxi['nom'] ?? '') . ' ' . ($taxi['prenom'] ?? ''));
-        $libStatutPush = ['paye'=>'Payé ✅','non_paye'=>'Non payé ❌','jour_off'=>'Jour off 🌙','panne'=>'Panne 🔧','accident'=>'Accident 🚨'];
         if ($statut === 'paye') {
-            pushNotif($db, $tenantId, 'taxi', "💰 Paiement taxi — $tNom", formatMoney($montant)." perçu le ".formatDate($date), BASE_URL."app/taximetres/detail.php?id=$taxiId");
+            pushNotif($db, $tenantId, 'taxi', "Paiement taxi — $tNom", formatMoney($montant)." perçu le ".formatDate($date), BASE_URL."app/taximetres/detail.php?id=$taxiId");
         } elseif ($statut === 'non_paye') {
-            pushNotif($db, $tenantId, 'alerte', "⚠️ Impayé taxi — $tNom", "N'a pas versé pour le ".formatDate($date), BASE_URL."app/taximetres/detail.php?id=$taxiId");
+            pushNotif($db, $tenantId, 'alerte', "Impayé taxi — $tNom", "N'a pas versé pour le ".formatDate($date), BASE_URL."app/taximetres/detail.php?id=$taxiId");
         }
         setFlash(FLASH_SUCCESS, 'Journée enregistrée.');
         redirect(BASE_URL . "app/taximetres/detail.php?id=$taxiId&mois=" . substr($date, 0, 7));
@@ -379,14 +378,14 @@ $activePage = 'taximetres';
 require_once BASE_PATH . '/includes/header.php';
 ?>
 <style>
-/* ── Alertes ── */
-.alerte-bar{border-radius:10px;padding:14px 18px;display:flex;align-items:center;gap:14px;margin-bottom:12px;font-size:.88rem}
-.alerte-bar.rouge{background:#fff1f2;border:1.5px solid #fca5a5}
-.alerte-bar.orange{background:#fff7ed;border:1.5px solid #fdba74}
-.alerte-bar.bleue{background:#eff6ff;border:1.5px solid #93c5fd}
-.alerte-bar .al-icon{font-size:1.4rem;flex-shrink:0}
-.alerte-bar .al-title{font-weight:700;margin-bottom:2px}
-.alerte-bar .al-sub{font-size:.78rem;color:#64748b}
+/* ── Alertes (compact) ── */
+.alerte-bar{border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:.8rem}
+.alerte-bar.rouge{background:#fef2f2;border:1px solid #fecaca}
+.alerte-bar.orange{background:#fffbeb;border:1px solid #fde68a}
+.alerte-bar.bleue{background:#eff6ff;border:1px solid #bfdbfe}
+.alerte-bar .al-icon{font-size:1rem;flex-shrink:0}
+.alerte-bar .al-title{font-weight:700;font-size:.8rem}
+.alerte-bar .al-sub{font-size:.72rem;color:#64748b}
 
 /* ── KPI cards ── */
 .kpi-vtc{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden}
@@ -463,7 +462,7 @@ require_once BASE_PATH . '/includes/header.php';
                 <span style="font-size:.78rem;color:#64748b"><i class="fas fa-phone" style="color:#10b981"></i> <?= sanitize($taxi['telephone'] ?? '—') ?></span>
                 <span class="veh-badge <?= $taxi['statut']==='actif' ? 'bg-success' : 'bg-secondary' ?>"><?= ucfirst($taxi['statut']) ?></span>
                 <?php if ($jourReposNom): ?>
-                <span class="veh-badge" style="background:#f1f5f9;color:#475569">🛌 Repos : <?= $jourReposNom ?>s</span>
+                <span class="veh-badge" style="background:#f1f5f9;color:#475569"><i class="fas fa-moon" style="font-size:.6rem"></i> Repos : <?= $jourReposNom ?>s</span>
                 <?php endif ?>
                 <?php if ($taxi['veh_statut'] === 'maintenance'): ?>
                 <span class="veh-badge" style="background:#fef3c7;color:#92400e"><i class="fas fa-wrench"></i> Véhicule en maintenance</span>
@@ -486,20 +485,14 @@ require_once BASE_PATH . '/includes/header.php';
 ════════════════════════════════════════════════════════════════ -->
 
 <?php if ($taxi['veh_statut'] === 'maintenance'): ?>
-<div class="alerte-bar" style="background:#fef3c7;border:1.5px solid #fbbf24;margin-bottom:12px">
-    <div class="al-icon" style="color:#f59e0b"><i class="fas fa-wrench"></i></div>
+<div class="alerte-bar orange">
+    <div class="al-icon" style="color:#d97706"><i class="fas fa-wrench"></i></div>
     <div style="flex:1">
-        <div class="al-title" style="color:#92400e">⚠ Véhicule en maintenance — <?= sanitize($taxi['veh_nom']) ?> (<?= sanitize($taxi['immatriculation']) ?>)</div>
-        <div class="al-sub" style="color:#b45309">
-            Le chauffeur ne peut pas travailler sur ce véhicule. Marquez les jours comme <strong>Panne</strong> pour ne pas les compter dans la dette,
-            ou assignez-lui un autre véhicule disponible.
-            <?php if ($detteTotal > 0): ?> · Dette actuelle : <strong style="color:#dc2626"><?= formatMoney($detteTotal) ?></strong><?php endif ?>
-        </div>
+        <div class="al-title" style="color:#92400e">Véhicule en maintenance<?php if ($detteTotal > 0): ?> · Dette : <strong style="color:#dc2626"><?= formatMoney($detteTotal) ?></strong><?php endif ?></div>
+        <div class="al-sub">Marquez les jours comme Panne ou assignez un autre véhicule.</div>
     </div>
     <?php if (!empty($veiculesDispos)): ?>
-    <button onclick="openModal('modal-vehicule')" class="btn btn-sm btn-primary">
-        <i class="fas fa-exchange-alt"></i> Assigner un autre véhicule
-    </button>
+    <button onclick="openModal('modal-vehicule')" class="btn btn-sm btn-primary"><i class="fas fa-exchange-alt"></i> Changer</button>
     <?php endif ?>
 </div>
 <?php endif ?>
@@ -508,49 +501,38 @@ require_once BASE_PATH . '/includes/header.php';
 <div class="alerte-bar rouge">
     <div class="al-icon" style="color:#ef4444"><i class="fas fa-exclamation-circle"></i></div>
     <div style="flex:1">
-        <div class="al-title" style="color:#991b1b">🔴 Dette en cours — <strong><?= formatMoney($detteTotal) ?></strong></div>
+        <div class="al-title" style="color:#991b1b">Dette : <?= formatMoney($detteTotal) ?></div>
         <div class="al-sub">
-            <?php if ($detteNonSaisis > 0): ?>
-            <span style="color:#dc2626">⚠ <?= $joursNonSaisis ?> jour(s) non renseigné(s) = <?= formatMoney($detteNonSaisis) ?> comptés comme dette</span> ·
-            <?php endif ?>
-            <?php if ($detteExplicite > 0): ?>
-            <?= (int)$solde['jours_impaye'] ?> jour(s) explicitement non payé(s) = <?= formatMoney($detteExplicite) ?> ·
-            <?php endif ?>
-            <?php if ($detteContra > 0): ?>
-            Contraventions non couvertes : <?= formatMoney($detteContra) ?>
-            <?php endif ?>
+            <?php $parts = []; ?>
+            <?php if ($detteNonSaisis > 0) $parts[] = $joursNonSaisis.'j non saisis = '.formatMoney($detteNonSaisis); ?>
+            <?php if ($detteExplicite > 0) $parts[] = (int)$solde['jours_impaye'].'j impayés = '.formatMoney($detteExplicite); ?>
+            <?php if ($detteContra > 0) $parts[] = 'Contrav. = '.formatMoney($detteContra); ?>
+            <?= implode(' · ', $parts) ?>
         </div>
     </div>
-    <button class="btn btn-sm" style="background:#fff;color:#dc2626;border:1px solid #fca5a5" onclick="openModal('modal-saisir')">
-        <i class="fas fa-dollar-sign"></i> Encaisser versement
-    </button>
+    <button class="btn btn-sm" style="background:#fff;color:#dc2626;border:1px solid #fca5a5" onclick="openModal('modal-saisir')">Encaisser</button>
 </div>
 <?php endif ?>
 
 <?php if ($retardHier || $retardAujourd): ?>
 <div class="alerte-bar orange">
-    <div class="al-icon" style="color:#f59e0b"><i class="fas fa-clock"></i></div>
+    <div class="al-icon" style="color:#d97706"><i class="fas fa-clock"></i></div>
     <div style="flex:1">
-        <div class="al-title" style="color:#92400e">⏰ Journée(s) non encore saisie(s) — comptent comme jours travaillés non payés !</div>
+        <div class="al-title" style="color:#92400e">Journée(s) non saisie(s)</div>
         <div class="al-sub">
-            <?= $retardAujourd ? "Aujourd'hui (".date('d/m/Y').") pas encore renseigné" : '' ?>
-            <?= ($retardHier && $retardAujourd) ? ' · ' : '' ?>
-            <?= $retardHier ? "Hier (".date('d/m/Y', strtotime('-1 day')).") pas encore renseigné" : '' ?>
-            — Si c'était un jour de congé, marquez-le "Jour off" pour l'exclure de la dette.
+            <?= $retardAujourd ? "Aujourd'hui (".date('d/m').') ' : '' ?><?= ($retardHier && $retardAujourd) ? '· ' : '' ?><?= $retardHier ? "Hier (".date('d/m', strtotime('-1 day')).')' : '' ?>
         </div>
     </div>
-    <button class="btn btn-sm btn-primary" onclick="document.getElementById('date_paiement_m').value='<?= $retardAujourd ? $today : $hier ?>'; openModal('modal-saisir')">
-        <i class="fas fa-plus"></i> Saisir maintenant
-    </button>
+    <button class="btn btn-sm btn-primary" onclick="document.getElementById('date_paiement_m').value='<?= $retardAujourd ? $today : $hier ?>'; openModal('modal-saisir')">Saisir</button>
 </div>
 <?php endif ?>
 
 <?php if ($joursNonSaisis > 0 && !$retardHier && !$retardAujourd): ?>
 <div class="alerte-bar bleue">
-    <div class="al-icon" style="color:#14b8a6"><i class="fas fa-calendar-exclamation"></i></div>
+    <div class="al-icon" style="color:#3b82f6"><i class="fas fa-info-circle"></i></div>
     <div>
-        <div class="al-title" style="color:#1e40af">📅 <?= $joursNonSaisis ?> jour(s) non renseigné(s) — comptés dans la dette</div>
-        <div class="al-sub">Depuis <?= formatDate($dateDebut) ?>, <?= $joursNonSaisis ?> journées sans statut. Vérifiez si ce sont des jours off ou des impayés.</div>
+        <div class="al-title" style="color:#1e40af"><?= $joursNonSaisis ?> jour(s) non renseigné(s) comptés dans la dette</div>
+        <div class="al-sub">Depuis <?= formatDate($dateDebut) ?>. Vérifiez si ce sont des jours off.</div>
     </div>
 </div>
 <?php endif ?>
@@ -562,54 +544,41 @@ require_once BASE_PATH . '/includes/header.php';
     <!-- KPI 1 : Dette -->
     <div class="kpi-vtc" style="border-left:3px solid #ef4444">
         <div class="ki"><i class="fas fa-exclamation-triangle"></i></div>
-        <div class="kl">💰 Ce que le chauffeur doit</div>
+        <div class="kl">Dette chauffeur</div>
         <div class="kv" style="color:<?= $detteTotal > 0 ? '#ef4444' : '#10b981' ?>"><?= formatMoney($detteTotal) ?></div>
-        <div class="ks" style="line-height:1.5">
-            <?php if ($detteNonSaisis > 0): ?>
-            <span style="color:#dc2626">⚠ <?= $joursNonSaisis ?>j non renseigné(s) = <?= formatMoney($detteNonSaisis) ?></span><br>
-            <?php endif ?>
-            <?php if ($detteExplicite > 0): ?>
-            <span><?= (int)$solde['jours_impaye'] ?>j non payé(s) = <?= formatMoney($detteExplicite) ?></span><br>
-            <?php endif ?>
-            <?php if ($detteContra > 0): ?>
-            <span>Contrav. non couvertes = <?= formatMoney($detteContra) ?></span><br>
-            <?php endif ?>
-            Tarif journalier : <strong><?= formatMoney($tarif) ?>/j</strong>
+        <div class="ks">
+            Tarif : <?= formatMoney($tarif) ?>/j
+            <?php if ($joursNonSaisis > 0): ?> · <?= $joursNonSaisis ?>j non saisis<?php endif ?>
         </div>
         <div class="kbar"><div class="kbar-fill" style="width:<?= $totalDu > 0 ? min(100,round($totalPercu/$totalDu*100)) : 0 ?>%;background:<?= $detteTotal > 0 ? '#ef4444' : '#10b981' ?>"></div></div>
     </div>
     <!-- KPI 2 : Versements -->
     <div class="kpi-vtc" style="border-left:3px solid #10b981">
         <div class="ki"><i class="fas fa-money-bill-wave"></i></div>
-        <div class="kl">✅ Ce qu'il a versé</div>
+        <div class="kl">Total versé</div>
         <div class="kv" style="color:#10b981"><?= formatMoney($totalPercu) ?></div>
         <div class="ks">
-            Total dû : <strong><?= formatMoney($totalDu) ?></strong><br>
-            <?= $joursTravaill ?> j. travaillés (<?= (int)$solde['jours_payes'] ?> payés · <?= (int)$solde['jours_impaye'] ?> impayés · <?= $joursNonSaisis ?> non saisis)
+            Dû : <?= formatMoney($totalDu) ?> · <?= (int)$solde['jours_payes'] ?> payés / <?= $joursTravaill ?> travaillés
         </div>
         <div class="kbar"><div class="kbar-fill" style="width:<?= $totalDu > 0 ? min(100,round($totalPercu/$totalDu*100)) : 100 ?>%;background:#10b981"></div></div>
     </div>
     <!-- KPI 3 : Fonds contravention -->
     <div class="kpi-vtc" style="border-left:3px solid #0d9488">
         <div class="ki"><i class="fas fa-shield-alt"></i></div>
-        <div class="kl">🛡 Fonds contravention</div>
-        <div class="kv" style="color:<?= $fondsBalance > 0 ? '#0d9488' : '#94a3b8' ?>"><?= formatMoney($fondsBalance) ?> <small style="font-size:.6rem">disponible</small></div>
+        <div class="kl">Fonds contravention</div>
+        <div class="kv" style="color:<?= $fondsBalance > 0 ? '#0d9488' : '#94a3b8' ?>"><?= formatMoney($fondsBalance) ?></div>
         <div class="ks">
-            Cotisé : <strong><?= formatMoney($fondsTotal) ?></strong> ·
-            Utilisé : <strong><?= formatMoney($fondsUtilise) ?></strong><br>
-            <?= $fondsBalance <= 0 ? '<span style="color:#ef4444">⚠ Solde vide — prochaine contravention = dette</span>' : '<span style="color:#10b981">✓ Couvert</span>' ?>
+            Cotisé : <?= formatMoney($fondsTotal) ?> · Utilisé : <?= formatMoney($fondsUtilise) ?>
         </div>
         <div class="kbar"><div class="kbar-fill" style="width:<?= $fondsTotal > 0 ? min(100,round($fondsBalance/$fondsTotal*100)) : 0 ?>%;background:#0d9488"></div></div>
     </div>
     <!-- KPI 4 : Activité -->
     <div class="kpi-vtc" style="border-left:3px solid #8b5cf6">
         <div class="ki"><i class="fas fa-calendar-check"></i></div>
-        <div class="kl">📊 Activité — <?= $nbJoursPeriode ?> j. total</div>
-        <div class="kv" style="color:#8b5cf6"><?= $tauxPresence ?>% <small style="font-size:.65rem">présence 30j</small></div>
+        <div class="kl">Présence 30j</div>
+        <div class="kv" style="color:#8b5cf6"><?= $tauxPresence ?>%</div>
         <div class="ks">
-            Off/Panne/Accident : <?= $joursOff ?> j. (exclus de la dette)<br>
-            Non renseignés : <strong style="color:<?= $joursNonSaisis > 0 ? '#ef4444' : '#10b981' ?>"><?= $joursNonSaisis ?> j.</strong>
-            <?= $joursNonSaisis > 0 ? '(comptés comme dû)' : '(tout renseigné ✓)' ?>
+            <?= $nbJoursPeriode ?> j. total · <?= $joursOff ?> off · <?= $joursNonSaisis ?> non saisis
         </div>
         <div class="kbar"><div class="kbar-fill" style="width:<?= $tauxPresence ?>%;background:<?= $tauxPresence >= 80 ? '#10b981' : ($tauxPresence >= 50 ? '#f59e0b' : '#ef4444') ?>"></div></div>
     </div>
@@ -640,7 +609,7 @@ require_once BASE_PATH . '/includes/header.php';
             <?php endfor;
 
             $libStatut = ['paye'=>'Payé','non_paye'=>'Non payé','jour_off'=>'Jour off','panne'=>'Panne','accident'=>'Accident','maladie'=>'Maladie'];
-            $iconStatut= ['paye'=>'✓','non_paye'=>'✗','jour_off'=>'○','panne'=>'⚙','accident'=>'⚡','maladie'=>'🤒'];
+            $iconStatut= ['paye'=>'✓','non_paye'=>'✗','jour_off'=>'—','panne'=>'P','accident'=>'A','maladie'=>'M'];
             // Déterminer le numéro ISO du jour de repos (1=Lun...7=Dim)
             $reposN = $jourReposConfig !== null ? $jourReposConfig + 1 : null;
 
@@ -671,10 +640,9 @@ require_once BASE_PATH . '/includes/header.php';
                 <div class="cal-montant" style="color:#94a3b8;font-size:.58rem">non compté</div>
                 <?php endif ?>
                 <?php elseif ($isReposAuto): ?>
-                <div class="cal-statut" style="background:#f1f5f9;color:#94a3b8;font-size:.6rem">🛌 <?= $jourReposNom ?></div>
-                <div class="cal-montant" style="color:#94a3b8;font-size:.58rem">repos auto</div>
+                <div class="cal-statut" style="background:#f1f5f9;color:#94a3b8;font-size:.6rem">Repos</div>
                 <?php elseif (!$isFutur && !$avantDeb): ?>
-                <div class="cal-statut" style="background:#fee2e2;color:#991b1b;font-size:.58rem;border:1px dashed #fca5a5">⚠ Non saisi</div>
+                <div class="cal-statut" style="background:#fee2e2;color:#991b1b;font-size:.58rem;border:1px dashed #fca5a5">Non saisi</div>
                 <div class="cal-montant" style="color:#dc2626;font-weight:700">-<?= number_format($tarif,0,',',' ') ?> F</div>
                 <?php endif ?>
             </div>
@@ -688,13 +656,13 @@ require_once BASE_PATH . '/includes/header.php';
             <?php endfor ?>
         </div>
         <div class="cal-legend">
-            <div class="leg-item"><div class="leg-dot s-paye"></div> ✓ Payé</div>
-            <div class="leg-item"><div class="leg-dot s-non_paye"></div> ✗ Non payé (dette)</div>
-            <div class="leg-item"><div class="leg-dot s-jour_off"></div> ○ Jour off (exclu)</div>
-            <div class="leg-item"><div class="leg-dot s-panne"></div> ⚙ Panne (exclu)</div>
-            <div class="leg-item"><div class="leg-dot s-accident"></div> ⚡ Accident (exclu)</div>
-            <div class="leg-item"><div class="leg-dot s-maladie"></div> 🤒 Maladie (exclu)</div>
-            <div class="leg-item"><div class="leg-dot" style="background:#f1f5f9;border:1px solid #e2e8f0"></div> 🛌 Repos auto (exclu)</div>
+            <div class="leg-item"><div class="leg-dot s-paye"></div> Payé</div>
+            <div class="leg-item"><div class="leg-dot s-non_paye"></div> Non payé</div>
+            <div class="leg-item"><div class="leg-dot s-jour_off"></div> Jour off</div>
+            <div class="leg-item"><div class="leg-dot s-panne"></div> Panne</div>
+            <div class="leg-item"><div class="leg-dot s-accident"></div> Accident</div>
+            <div class="leg-item"><div class="leg-dot s-maladie"></div> Maladie</div>
+            <div class="leg-item"><div class="leg-dot" style="background:#f1f5f9;border:1px solid #e2e8f0"></div> Repos auto</div>
             <div class="leg-item"><div class="leg-dot" style="background:#fee2e2;border:1px dashed #fca5a5"></div> ⚠ Non saisi = dette !</div>
             <div style="margin-left:auto">
                 <button class="btn btn-primary btn-sm" onclick="openModal('modal-saisir')"><i class="fas fa-plus"></i> Saisir un jour</button>

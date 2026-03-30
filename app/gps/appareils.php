@@ -267,6 +267,26 @@ require_once BASE_PATH . '/includes/header.php';
 .boitier-card-info { display:flex; flex-wrap:wrap; gap:8px; font-size:.76rem; }
 .boitier-table-wrap { display:block; overflow-x:auto; }
 
+/* SMS commands */
+.sms-commands { display:grid; gap:10px; }
+.sms-cmd-label { font-size:.75rem; font-weight:600; color:#475569; margin-bottom:4px; display:flex; align-items:center; gap:6px; }
+.sms-cmd-box {
+    position:relative; background:#0f172a; color:#a5f3fc; font-family:monospace; font-size:.82rem;
+    padding:10px 14px; border-radius:8px; cursor:pointer; word-break:break-all; line-height:1.5;
+    transition: background .15s;
+}
+.sms-cmd-box:hover { background:#1e293b; }
+.sms-copy-hint {
+    position:absolute; right:8px; top:50%; transform:translateY(-50%);
+    font-size:.68rem; color:#94a3b8; font-family:inherit;
+}
+.sms-cmd-box.copied { background:#064e3b !important; }
+.sms-cmd-box.copied .sms-copy-hint { color:#34d399; }
+
+/* Brand tabs */
+.brand-tab { transition: all .15s; }
+.brand-tab:hover { color:#0d9488 !important; }
+
 @media (max-width:640px) {
     /* Table → cards */
     .gps-table-wrap { display:none !important; }
@@ -330,7 +350,8 @@ require_once BASE_PATH . '/includes/header.php';
     </strong>
     <code style="font-size:.75rem;background:rgba(0,0,0,.07);padding:2px 7px;border-radius:4px;color:#475569"><?= TRACCAR_URL ?></code>
     <?php if ($traccarOk): ?>
-    <a href="http://localhost:8082" target="_blank" class="btn btn-ghost btn-sm" style="margin-left:auto;font-size:.72rem">
+    <?php $traccarBase = str_replace('/api', '', TRACCAR_URL); ?>
+    <a href="<?= $traccarBase ?>" target="_blank" class="btn btn-ghost btn-sm" style="margin-left:auto;font-size:.72rem">
         <i class="fas fa-external-link-alt"></i> Ouvrir Traccar
     </a>
     <?php else: ?>
@@ -649,39 +670,37 @@ require_once BASE_PATH . '/includes/header.php';
     <?php endif ?>
 </div>
 
-<!-- Guide (accordéon) -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- GUIDE COMPLET DE CONFIGURATION GPS                                      -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
 <?php
 $host = parse_url(TRACCAR_URL, PHP_URL_HOST) ?: 'localhost';
-$boitiers = [
-    ['Concox GT06, GT06N, JMT',       'GT06',     $host, '5023', 'moov.ci / mtn.ci'],
-    ['Teltonika FMB920, FMB130',       'Teltonika',$host, '5027', 'moov.ci / mtn.ci'],
-    ['Coban TK103, GPS103, TK915',     'Coban',    $host, '5027', 'moov.ci / mtn.ci'],
-    ['Sinotrack ST-901, ST-902, ST906','H02',      $host, '5013', 'moov.ci / mtn.ci'],
-    ['Queclink GV20, GV55, GV300',     'Queclink', $host, '5093', 'moov.ci / mtn.ci'],
-    ['Jointech JT701, JT709',          'Jointech', $host, '5100', 'moov.ci / mtn.ci'],
-    ['Ruptela FM-Eco4, Pro5',          'Ruptela',  $host, '5046', 'moov.ci / mtn.ci'],
-    ['Suntech ST300, ST310',           'Suntech',  $host, '5011', 'moov.ci / mtn.ci'],
-    ['NMEA générique',                 'NMEA',     $host,'10050', 'selon opérateur'],
-];
+// Résoudre l'IP du serveur pour les commandes SMS (les boîtiers ne gèrent pas les domaines)
+$serverIP = $host;
+if (!filter_var($host, FILTER_VALIDATE_IP)) {
+    $resolved = @gethostbyname($host);
+    if ($resolved && $resolved !== $host) $serverIP = $resolved;
+}
 ?>
+
+<!-- Card 1 : Étapes rapides -->
 <div class="card" style="margin-bottom:16px">
     <div class="card-header" style="padding:12px 16px;cursor:pointer;user-select:none"
-         onclick="const b=this.nextElementSibling;b.style.display=b.style.display==='none'?'block':'none';this.querySelector('.guide-chev').style.transform=b.style.display==='none'?'rotate(0deg)':'rotate(180deg)'">
+         onclick="toggleGuide(this)">
         <h3 class="card-title" style="margin:0;font-size:.88rem;display:flex;align-items:center;gap:8px">
-            <i class="fas fa-book-open" style="color:#0d9488"></i>
-            Guide : Comment connecter votre boîtier GPS ?
+            <i class="fas fa-rocket" style="color:#0d9488"></i>
+            Guide rapide : Mettre un boîtier GPS en ligne
             <i class="fas fa-chevron-down guide-chev" style="margin-left:auto;font-size:.75rem;color:#94a3b8;transition:transform .25s"></i>
         </h3>
     </div>
     <div style="display:none">
-
         <!-- Étapes -->
         <div class="guide-steps">
             <?php foreach ([
-                ['1','fa-barcode',  '#0d9488','Trouvez l\'IMEI',       'Numéro à 15 chiffres sous le boîtier ou dans sa notice.'],
-                ['2','fa-plug',     '#d97706','Installez le boîtier',  'Branchez au câblage 12V. La LED verte = alimentation OK.'],
-                ['3','fa-server',   '#7c3aed','Configurez le serveur', 'Dans les réglages boîtier : entrez l\'IP + port du tableau ci-dessous.'],
-                ['4','fa-check-circle','#059669','Associez dans FlotteCar','Cliquez «&nbsp;Associer GPS&nbsp;» sur le véhicule, entrez l\'IMEI. C\'est tout !'],
+                ['1','fa-sim-card', '#0d9488','Insérez la carte SIM','Puce avec forfait data actif (2G suffit). Opérateurs CI : Moov, MTN, Orange.'],
+                ['2','fa-plug',    '#d97706','Branchez le boîtier','Connectez au câblage 12V du véhicule. LED allumée = alimentation OK.'],
+                ['3','fa-sms',     '#7c3aed','Envoyez les SMS de config','Depuis votre téléphone, envoyez les SMS au numéro de la SIM du boîtier (voir ci-dessous).'],
+                ['4','fa-check-circle','#059669','Associez dans FlotteCar','Cliquez "Associer GPS", entrez l\'IMEI. Le boîtier apparaît en ligne sous 2-5 min.'],
             ] as [$n, $ic, $c, $t, $d]): ?>
             <div style="display:flex;gap:10px;align-items:flex-start">
                 <div style="width:32px;height:32px;border-radius:50%;background:<?= $c ?>;color:#fff;display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:700;flex-shrink:0;box-shadow:0 2px 8px <?= $c ?>55"><?= $n ?></div>
@@ -695,64 +714,400 @@ $boitiers = [
             <?php endforeach ?>
         </div>
 
-        <!-- Paramètres serveur -->
-        <div style="padding:14px 16px">
-            <div style="font-size:.8rem;font-weight:700;color:#0f172a;margin-bottom:12px">
-                <i class="fas fa-network-wired" style="color:#0d9488"></i>
-                Paramètres à entrer dans votre boîtier
+        <div style="padding:12px 16px;background:#f0fdf4;border-top:1px solid #dcfce7">
+            <div style="font-size:.78rem;color:#15803d;display:flex;align-items:center;gap:8px">
+                <i class="fas fa-info-circle"></i>
+                <strong>L'IMEI</strong> est un numéro à 15 chiffres imprimé sous le boîtier ou sur l'emballage. Pas besoin de mot de passe FlotteCar pour le client !
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Card 2 : Commandes SMS par marque -->
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header" style="padding:12px 16px;cursor:pointer;user-select:none"
+         onclick="toggleGuide(this)">
+        <h3 class="card-title" style="margin:0;font-size:.88rem;display:flex;align-items:center;gap:8px">
+            <i class="fas fa-sms" style="color:#7c3aed"></i>
+            Commandes SMS par marque de boîtier
+            <span style="font-size:.7rem;font-weight:400;color:#94a3b8;margin-left:4px">(cliquez pour ouvrir)</span>
+            <i class="fas fa-chevron-down guide-chev" style="margin-left:auto;font-size:.75rem;color:#94a3b8;transition:transform .25s"></i>
+        </h3>
+    </div>
+    <div style="display:none">
+        <div style="padding:12px 16px;background:#fef9c3;border-bottom:1px solid #fde68a;font-size:.78rem;color:#92400e;display:flex;align-items:center;gap:8px">
+            <i class="fas fa-key"></i>
+            <span><strong>Mot de passe par défaut :</strong> La plupart des boîtiers utilisent <code style="background:#fff;padding:2px 8px;border-radius:4px;font-weight:800;font-size:.85rem">123456</code> comme mot de passe usine. Si ça ne marche pas, essayez <code style="background:#fff;padding:2px 8px;border-radius:4px">000000</code> ou consultez la notice.</span>
+        </div>
+
+        <!-- Onglets marques -->
+        <div style="padding:0 16px;border-bottom:1px solid #e2e8f0;display:flex;gap:0;overflow-x:auto" id="brand-tabs">
+            <?php
+            $brands = [
+                ['gt06',      'Concox GT06',    'fa-microchip'],
+                ['tk103',     'Coban TK103',    'fa-microchip'],
+                ['sinotrack', 'Sinotrack',      'fa-microchip'],
+                ['teltonika', 'Teltonika',      'fa-microchip'],
+                ['other',     'Autres marques', 'fa-ellipsis-h'],
+            ];
+            foreach ($brands as $i => [$key, $label, $icon]):
+            ?>
+            <button class="brand-tab <?= $i === 0 ? 'active' : '' ?>"
+                    onclick="showBrand('<?= $key ?>')"
+                    style="padding:10px 14px;font-size:.75rem;font-weight:600;border:none;background:none;color:<?= $i === 0 ? '#0d9488' : '#64748b' ?>;border-bottom:2px solid <?= $i === 0 ? '#0d9488' : 'transparent' ?>;cursor:pointer;white-space:nowrap">
+                <i class="fas <?= $icon ?>" style="margin-right:3px"></i> <?= $label ?>
+            </button>
+            <?php endforeach ?>
+        </div>
+
+        <!-- ── Concox GT06 / GT06N / JMT ─────────────────────────── -->
+        <div class="brand-panel" id="brand-gt06" style="padding:16px">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#0d9488,#14b8a6);display:flex;align-items:center;justify-content:center">
+                    <i class="fas fa-microchip" style="color:#fff;font-size:1rem"></i>
+                </div>
+                <div>
+                    <div style="font-weight:700;font-size:.9rem;color:#0f172a">Concox GT06 / GT06N / JMT / JM-VL01</div>
+                    <div style="font-size:.72rem;color:#94a3b8">Protocole GT06 · Port <span class="port-code">5023</span> · Mot de passe usine : <code>123456</code></div>
+                </div>
             </div>
 
-            <!-- TABLE (desktop) -->
+            <div style="font-size:.78rem;color:#475569;margin-bottom:10px">
+                <strong>Envoyez ces SMS</strong> au numéro de la SIM insérée dans le boîtier :
+            </div>
+
+            <div class="sms-commands">
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-1" style="color:#0d9488"></i> Configurer le serveur</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        SERVER,1,<?= $serverIP ?>,5023,0#
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-2" style="color:#0d9488"></i> Configurer l'APN (Moov CI)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        APN,moov.ci#
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-2" style="color:#d97706"></i> APN alternatif (MTN CI)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        APN,mtn.ci#
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-3" style="color:#0d9488"></i> Activer le GPS (si désactivé)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        GPSON,1#
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-clock" style="color:#64748b"></i> Intervalle de suivi (10 sec)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        TIMER,10#
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-question-circle" style="color:#64748b"></i> Vérifier les paramètres</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        PARAM#
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Coban TK103 / GPS103 / TK915 ──────────────────────── -->
+        <div class="brand-panel" id="brand-tk103" style="padding:16px;display:none">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#d97706,#f59e0b);display:flex;align-items:center;justify-content:center">
+                    <i class="fas fa-microchip" style="color:#fff;font-size:1rem"></i>
+                </div>
+                <div>
+                    <div style="font-weight:700;font-size:.9rem;color:#0f172a">Coban TK103 / GPS103 / TK915</div>
+                    <div style="font-size:.72rem;color:#94a3b8">Protocole Coban · Port <span class="port-code">5027</span> · Mot de passe usine : <code>123456</code></div>
+                </div>
+            </div>
+
+            <div style="font-size:.78rem;color:#475569;margin-bottom:10px">
+                <strong>Envoyez ces SMS</strong> au numéro de la SIM du boîtier :
+            </div>
+
+            <div class="sms-commands">
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-1" style="color:#d97706"></i> Configurer l'IP et le port</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        adminip123456 <?= $serverIP ?> 5027
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-2" style="color:#d97706"></i> Configurer l'APN (Moov CI)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        apn123456 moov.ci
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-2" style="color:#f59e0b"></i> APN alternatif (MTN CI)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        apn123456 mtn.ci
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-3" style="color:#d97706"></i> Activer le suivi continu</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        fix010s***n123456
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                    <div style="font-size:.68rem;color:#94a3b8;margin-top:3px">Envoi toutes les 10 sec. Changer <code>010s</code> pour ajuster (ex: <code>030s</code> = 30 sec)</div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-question-circle" style="color:#64748b"></i> Vérifier les paramètres</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        check123456
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Sinotrack ST-901 / ST-902 / ST-906 ────────────────── -->
+        <div class="brand-panel" id="brand-sinotrack" style="padding:16px;display:none">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#7c3aed,#a78bfa);display:flex;align-items:center;justify-content:center">
+                    <i class="fas fa-microchip" style="color:#fff;font-size:1rem"></i>
+                </div>
+                <div>
+                    <div style="font-weight:700;font-size:.9rem;color:#0f172a">Sinotrack ST-901 / ST-902 / ST-906</div>
+                    <div style="font-size:.72rem;color:#94a3b8">Protocole H02 · Port <span class="port-code">5013</span> · Mot de passe usine : <code>123456</code></div>
+                </div>
+            </div>
+
+            <div style="font-size:.78rem;color:#475569;margin-bottom:10px">
+                <strong>Envoyez ces SMS</strong> au numéro de la SIM du boîtier :
+            </div>
+
+            <div class="sms-commands">
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-1" style="color:#7c3aed"></i> Configurer le serveur</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        804 <?= $serverIP ?> 5013
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-2" style="color:#7c3aed"></i> Configurer l'APN (Moov CI)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        803 moov.ci
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-2" style="color:#a78bfa"></i> APN alternatif (MTN CI)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        803 mtn.ci
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-3" style="color:#7c3aed"></i> Intervalle de suivi (10 sec)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        805 10
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-question-circle" style="color:#64748b"></i> Vérifier les paramètres</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        802
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-undo" style="color:#ef4444"></i> Reset usine (si problème)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        FACTORY
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Teltonika FMB920 / FMB130 ─────────────────────────── -->
+        <div class="brand-panel" id="brand-teltonika" style="padding:16px;display:none">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#0369a1,#38bdf8);display:flex;align-items:center;justify-content:center">
+                    <i class="fas fa-microchip" style="color:#fff;font-size:1rem"></i>
+                </div>
+                <div>
+                    <div style="font-weight:700;font-size:.9rem;color:#0f172a">Teltonika FMB920 / FMB130 / FMB140</div>
+                    <div style="font-size:.72rem;color:#94a3b8">Protocole Teltonika · Port <span class="port-code">5027</span> · Pas de mot de passe SMS</div>
+                </div>
+            </div>
+
+            <div style="background:#e0f2fe;border:1px solid #bae6fd;border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:.78rem;color:#0369a1">
+                <i class="fas fa-info-circle"></i>
+                <strong>Teltonika se configure par SMS</strong> (pas besoin d'application ni de câble USB).
+            </div>
+
+            <div class="sms-commands">
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-1" style="color:#0369a1"></i> Configurer le serveur + port</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        <space>setparam 2001:<?= $serverIP ?>;2002:5027
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                    <div style="font-size:.68rem;color:#94a3b8;margin-top:3px">Le SMS doit commencer par un espace</div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-2" style="color:#0369a1"></i> Configurer l'APN (Moov CI)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        <space>setparam 2000:moov.ci
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-2" style="color:#38bdf8"></i> APN alternatif (MTN CI)</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        <space>setparam 2000:mtn.ci
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+                <div class="sms-cmd">
+                    <div class="sms-cmd-label"><i class="fas fa-question-circle" style="color:#64748b"></i> Vérifier les paramètres</div>
+                    <div class="sms-cmd-box" onclick="copySMS(this)">
+                        <space>getparam 2000;2001;2002
+                        <span class="sms-copy-hint"><i class="fas fa-copy"></i> Copier</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Autres marques ────────────────────────────────────── -->
+        <div class="brand-panel" id="brand-other" style="padding:16px;display:none">
+            <div style="font-weight:700;font-size:.85rem;color:#0f172a;margin-bottom:12px">
+                <i class="fas fa-list" style="color:#64748b"></i> Tableau récapitulatif tous boîtiers
+            </div>
+
             <div class="boitier-table-wrap">
                 <table class="table" style="font-size:.78rem;margin:0">
                     <thead>
                         <tr style="background:#f8fafc">
-                            <th style="padding:7px 12px">Marque / Modèle</th>
-                            <th style="padding:7px 12px">Protocole</th>
-                            <th style="padding:7px 12px">IP Serveur</th>
-                            <th style="padding:7px 12px">Port TCP</th>
-                            <th style="padding:7px 12px">APN</th>
+                            <th style="padding:7px 12px">Marque</th>
+                            <th style="padding:7px 12px">Port</th>
+                            <th style="padding:7px 12px">MDP usine</th>
+                            <th style="padding:7px 12px">SMS serveur</th>
+                            <th style="padding:7px 12px">SMS APN</th>
                         </tr>
                     </thead>
                     <tbody>
-                    <?php foreach ($boitiers as [$m, $p, $s, $port, $apn]): ?>
-                    <tr>
-                        <td style="padding:6px 12px"><?= $m ?></td>
-                        <td style="padding:6px 12px"><span class="proto-code"><?= $p ?></span></td>
-                        <td style="padding:6px 12px"><code style="background:#f1f5f9;padding:2px 7px;border-radius:4px;font-size:.73rem"><?= $s ?></code></td>
-                        <td style="padding:6px 12px"><span class="port-code"><?= $port ?></span></td>
-                        <td style="padding:6px 12px;font-size:.72rem;color:#64748b"><?= $apn ?></td>
-                    </tr>
-                    <?php endforeach ?>
+                        <tr>
+                            <td style="padding:6px 12px;font-weight:600">Queclink GV55/GV300</td>
+                            <td style="padding:6px 12px"><span class="port-code">5093</span></td>
+                            <td style="padding:6px 12px"><code>Queclink</code></td>
+                            <td style="padding:6px 12px"><code style="font-size:.7rem">AT+GTBSI=Queclink,<?= $serverIP ?>,5093,,,,0001$</code></td>
+                            <td style="padding:6px 12px"><code style="font-size:.7rem">AT+GTQSS=Queclink,0,moov.ci,,,,,,,0001$</code></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:6px 12px;font-weight:600">Jointech JT701/JT709</td>
+                            <td style="padding:6px 12px"><span class="port-code">5100</span></td>
+                            <td style="padding:6px 12px"><code>123456</code></td>
+                            <td style="padding:6px 12px" colspan="2"><span style="color:#94a3b8">Configuration via logiciel PC (Jointech Tool)</span></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:6px 12px;font-weight:600">Ruptela FM-Eco4</td>
+                            <td style="padding:6px 12px"><span class="port-code">5046</span></td>
+                            <td style="padding:6px 12px"><code>—</code></td>
+                            <td style="padding:6px 12px" colspan="2"><span style="color:#94a3b8">Configuration via Ruptela Device Center (USB)</span></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:6px 12px;font-weight:600">Suntech ST300/ST310</td>
+                            <td style="padding:6px 12px"><span class="port-code">5011</span></td>
+                            <td style="padding:6px 12px"><code>0000</code></td>
+                            <td style="padding:6px 12px"><code style="font-size:.7rem">SA200NTW;0000;02;<?= $serverIP ?>;5011</code></td>
+                            <td style="padding:6px 12px"><code style="font-size:.7rem">SA200GTF;0000;moov.ci</code></td>
+                        </tr>
                     </tbody>
                 </table>
             </div>
 
-            <!-- CARTES (mobile) -->
+            <!-- Mobile cards -->
             <div class="boitier-cards">
-                <?php foreach ($boitiers as [$m, $p, $s, $port, $apn]): ?>
+                <?php foreach ([
+                    ['Queclink GV55/GV300', '5093', 'Queclink', "AT+GTBSI=Queclink,{$serverIP},5093,,,,0001\$"],
+                    ['Jointech JT701/JT709','5100', '123456',   'Config via logiciel PC'],
+                    ['Ruptela FM-Eco4',     '5046', '—',        'Config via USB'],
+                    ['Suntech ST300/ST310', '5011', '0000',     "SA200NTW;0000;02;{$serverIP};5011"],
+                ] as [$m, $port, $mdp, $cmd]): ?>
                 <div class="boitier-card">
                     <div class="boitier-card-title"><i class="fas fa-microchip" style="color:#64748b"></i> <?= $m ?></div>
                     <div class="boitier-card-info">
-                        <span><span class="proto-code"><?= $p ?></span></span>
-                        <span style="display:flex;align-items:center;gap:4px">
-                            <span style="font-size:.7rem;color:#94a3b8">IP :</span>
-                            <code style="font-size:.73rem;background:#f1f5f9;padding:2px 6px;border-radius:4px"><?= $s ?></code>
-                        </span>
-                        <span style="display:flex;align-items:center;gap:4px">
-                            <span style="font-size:.7rem;color:#94a3b8">Port :</span>
-                            <span class="port-code"><?= $port ?></span>
-                        </span>
-                        <span style="font-size:.72rem;color:#64748b"><?= $apn ?></span>
+                        <span>Port : <span class="port-code"><?= $port ?></span></span>
+                        <span>MDP : <code><?= $mdp ?></code></span>
+                        <span style="font-size:.7rem;color:#64748b;word-break:break-all"><code><?= $cmd ?></code></span>
                     </div>
                 </div>
                 <?php endforeach ?>
             </div>
+        </div>
+    </div>
+</div>
 
-            <div style="margin-top:12px;padding:10px 14px;background:#f0f9ff;border-radius:8px;font-size:.78rem;color:#0369a1;border-left:3px solid #38bdf8">
-                <i class="fas fa-lightbulb"></i>
-                <strong>Astuce :</strong> GT06, TK103, Sinotrack — entrez l'IP + port par SMS de configuration.
-                Puis entrez l'IMEI dans FlotteCar. Le signal apparaît en quelques minutes.
+<!-- Card 3 : Diagnostic "Pourquoi mon boîtier est hors ligne ?" -->
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header" style="padding:12px 16px;cursor:pointer;user-select:none"
+         onclick="toggleGuide(this)">
+        <h3 class="card-title" style="margin:0;font-size:.88rem;display:flex;align-items:center;gap:8px">
+            <i class="fas fa-exclamation-triangle" style="color:#d97706"></i>
+            Diagnostic : Mon boîtier est "Hors ligne" ?
+            <i class="fas fa-chevron-down guide-chev" style="margin-left:auto;font-size:.75rem;color:#94a3b8;transition:transform .25s"></i>
+        </h3>
+    </div>
+    <div style="display:none;padding:16px">
+        <div style="display:grid;gap:12px">
+            <?php foreach ([
+                ['fa-sim-card',  '#ef4444', 'Pas de carte SIM ou SIM sans data',
+                 'Insérez une SIM avec un forfait data actif (même 2G/GPRS suffit). Vérifiez que la SIM a du crédit.'],
+                ['fa-wifi',      '#d97706', 'APN non configuré ou incorrect',
+                 'Le boîtier a besoin de l\'APN de l\'opérateur pour se connecter à internet. Envoyez le SMS APN correspondant (voir ci-dessus). Moov CI = <code>moov.ci</code>, MTN CI = <code>mtn.ci</code>, Orange CI = <code>orange.ci</code>'],
+                ['fa-server',    '#7c3aed', 'IP/Port serveur non configuré',
+                 "Le boîtier doit savoir où envoyer les données. Envoyez le SMS de configuration serveur avec l'IP <code>{$serverIP}</code> et le port correspondant à votre modèle."],
+                ['fa-plug',      '#0369a1', 'Boîtier pas alimenté (LED éteinte)',
+                 'Vérifiez le branchement 12V. Le fil rouge = +12V batterie, fil noir = masse. La LED doit clignoter.'],
+                ['fa-satellite',  '#059669', 'Pas de signal GPS (intérieur/garage)',
+                 'Le boîtier doit voir le ciel pour capter les satellites GPS. Sortez le véhicule dehors et attendez 2-5 min.'],
+                ['fa-key',       '#92400e', 'Mot de passe du boîtier changé',
+                 'Si quelqu\'un a changé le mot de passe, les commandes SMS avec <code>123456</code> ne marchent plus. Faites un reset usine (voir notice du boîtier).'],
+            ] as [$icon, $color, $title, $desc]): ?>
+            <div style="display:flex;gap:12px;align-items:flex-start;padding:12px;border-radius:8px;background:#f8fafc;border-left:3px solid <?= $color ?>">
+                <i class="fas <?= $icon ?>" style="color:<?= $color ?>;font-size:1rem;margin-top:2px;flex-shrink:0"></i>
+                <div>
+                    <div style="font-weight:700;font-size:.82rem;color:#0f172a;margin-bottom:3px"><?= $title ?></div>
+                    <div style="font-size:.75rem;color:#64748b;line-height:1.6"><?= $desc ?></div>
+                </div>
+            </div>
+            <?php endforeach ?>
+        </div>
+
+        <div style="margin-top:14px;padding:12px 16px;background:#f0f9ff;border-radius:8px;border-left:3px solid #38bdf8">
+            <div style="font-size:.82rem;font-weight:700;color:#0369a1;margin-bottom:6px">
+                <i class="fas fa-lightbulb"></i> Checklist rapide
+            </div>
+            <div style="font-size:.78rem;color:#0369a1;line-height:1.8">
+                1. SIM avec crédit data insérée ? <br>
+                2. Boîtier alimenté (LED allumée) ? <br>
+                3. SMS APN envoyé ? <br>
+                4. SMS serveur (IP + port) envoyé ? <br>
+                5. IMEI saisi dans FlotteCar ? <br>
+                6. Véhicule dehors (signal GPS) ? <br>
+                <strong>Si tout est OK, le boîtier apparaît en ligne sous 2-5 minutes.</strong>
             </div>
         </div>
     </div>
@@ -930,6 +1285,48 @@ function scheduleRefresh() {
     }, 60000);
 }
 scheduleRefresh();
+
+// ── Guide : toggle accordéons ────────────────────────────────────────────────
+function toggleGuide(header) {
+    const body = header.nextElementSibling;
+    const chev = header.querySelector('.guide-chev');
+    const open = body.style.display === 'none';
+    body.style.display = open ? 'block' : 'none';
+    if (chev) chev.style.transform = open ? 'rotate(180deg)' : 'rotate(0deg)';
+}
+
+// ── Onglets marques ──────────────────────────────────────────────────────────
+function showBrand(key) {
+    document.querySelectorAll('.brand-panel').forEach(p => p.style.display = 'none');
+    document.querySelectorAll('.brand-tab').forEach(t => {
+        t.classList.remove('active');
+        t.style.color = '#64748b';
+        t.style.borderBottomColor = 'transparent';
+    });
+    const panel = document.getElementById('brand-' + key);
+    if (panel) panel.style.display = 'block';
+    const tab = event.target.closest('.brand-tab');
+    if (tab) {
+        tab.classList.add('active');
+        tab.style.color = '#0d9488';
+        tab.style.borderBottomColor = '#0d9488';
+    }
+}
+
+// ── Copier SMS ───────────────────────────────────────────────────────────────
+function copySMS(el) {
+    // Get text content minus the copy hint
+    const hint = el.querySelector('.sms-copy-hint');
+    const text = el.textContent.replace(hint?.textContent || '', '').trim();
+    navigator.clipboard.writeText(text).then(() => {
+        el.classList.add('copied');
+        hint.innerHTML = '<i class="fas fa-check"></i> Copié !';
+        setTimeout(() => {
+            el.classList.remove('copied');
+            hint.innerHTML = '<i class="fas fa-copy"></i> Copier';
+        }, 2000);
+    });
+}
 </script>
 
 <?php require_once BASE_PATH . '/includes/footer.php'; ?>

@@ -86,7 +86,7 @@ if ($traccarOk) {
 
 // ── Helper : insérer une alerte (avec cooldown anti-spam) ────────────────────
 function insertAlerte(PDO $db, int $tenantId, int $vehiculeId, ?int $regleId,
-                      string $type, string $message, string $valeur = '', int $cooldownMin = 60): bool
+                      string $type, string $message, string $valeur = '', int $cooldownMin = 60): int
 {
     // Vérifier si une alerte du même type existe déjà dans la fenêtre cooldown
     $check = $db->prepare("
@@ -96,13 +96,45 @@ function insertAlerte(PDO $db, int $tenantId, int $vehiculeId, ?int $regleId,
         LIMIT 1
     ");
     $check->execute([$tenantId, $vehiculeId, $type, $cooldownMin]);
-    if ($check->fetch()) return false; // déjà alerté récemment
+    if ($check->fetch()) return 0; // déjà alerté récemment
 
     $db->prepare("
         INSERT INTO alertes_regles (tenant_id, vehicule_id, regle_id, type_alerte, message, valeur_declencheur)
         VALUES (?, ?, ?, ?, ?, ?)
     ")->execute([$tenantId, $vehiculeId, $regleId, $type, $message, $valeur]);
-    return true;
+    return (int)$db->lastInsertId();
+}
+
+/**
+ * Exécuter l'action automatique associée à la règle (couper moteur, etc.)
+ */
+function executeAction(PDO $db, TraccarAPI $traccar, array $r, int $alerteId, bool $traccarOk): void
+{
+    $action = $r['action_auto'] ?? 'notification_only';
+    if ($action === 'notification_only') return;
+
+    $deviceId = (int)($r['traccar_device_id'] ?? 0);
+    if (!$deviceId || !$traccarOk) {
+        clog("  → Action $action impossible — device #$deviceId " . ($traccarOk ? 'inconnu' : '(Traccar hors ligne)'));
+        $db->prepare("UPDATE alertes_regles SET action_executee='echec_traccar_offline' WHERE id=?")->execute([$alerteId]);
+        return;
+    }
+
+    $executed = null;
+    if (in_array($action, ['couper_moteur', 'couper_moteur_et_notifier'])) {
+        try {
+            $ok = $traccar->stopEngine($deviceId);
+            $executed = $ok ? 'moteur_coupe' : 'echec_coupure';
+        } catch (Throwable $e) {
+            $executed = 'echec_exception';
+            clog("  → ERREUR stopEngine: " . $e->getMessage());
+        }
+        clog("  → ACTION: $executed (device #$deviceId)");
+    }
+
+    if ($executed) {
+        $db->prepare("UPDATE alertes_regles SET action_executee=? WHERE id=?")->execute([$executed, $alerteId]);
+    }
 }
 
 // ── Haversine distance (km) ───────────────────────────────────────────────────
@@ -148,8 +180,10 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                     $horsJour  = !in_array($jourNow, $jours);
                     if ($horsPlage || $horsJour) {
                         $msg = "🚨 $nom : mouvement détecté hors des heures autorisées ({$now->format('H:i')} — autorisé {$params['heure_debut']} à {$params['heure_fin']})";
-                        if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'horaire', $msg, $now->format('H:i'), 120)) {
+                        $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'horaire', $msg, $now->format('H:i'), 120);
+                        if ($aid) {
                             clog("ALERTE horaire — $nom"); $nbAlertes++;
+                            executeAction($db, $traccar, $r, $aid, $traccarOk);
                         }
                     }
                 }
@@ -161,8 +195,10 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                 $vMax = (int)($params['vitesse_max'] ?? 100);
                 if ($vitesse > $vMax) {
                     $msg = "⚡ $nom : vitesse excessive — {$vitesse} km/h (limite : {$vMax} km/h)";
-                    if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'vitesse', $msg, "{$vitesse}km/h", 30)) {
+                    $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'vitesse', $msg, "{$vitesse}km/h", 30);
+                    if ($aid) {
                         clog("ALERTE vitesse — $nom : {$vitesse}km/h"); $nbAlertes++;
+                        executeAction($db, $traccar, $r, $aid, $traccarOk);
                     }
                 }
                 break;
@@ -178,7 +214,8 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                     $msg = $restant <= 0
                         ? "🔧 $nom : vidange dépassée ! (compteur : {$kmActuel} km, prévu : {$kmProchaine} km)"
                         : "🔧 $nom : vidange dans {$restant} km (compteur : {$kmActuel} km)";
-                    if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'vidange', $msg, "{$kmActuel}km", 1440)) {
+                    $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'vidange', $msg, "{$kmActuel}km", 1440);
+                    if ($aid) {
                         clog("ALERTE vidange — $nom"); $nbAlertes++;
                     }
                 }
@@ -196,7 +233,8 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                         $msg = $jRestants <= 0
                             ? "📋 $nom : {$label} EXPIRÉE depuis " . abs($jRestants) . " jour(s) !"
                             : "📋 $nom : {$label} expire dans {$jRestants} jour(s) ({$expiration->format('d/m/Y')})";
-                        if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, "assurance_{$label}", $msg, $expiration->format('d/m/Y'), 1440)) {
+                        $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, "assurance_{$label}", $msg, $expiration->format('d/m/Y'), 1440);
+                        if ($aid) {
                             clog("ALERTE {$label} — $nom"); $nbAlertes++;
                         }
                     }
@@ -209,7 +247,8 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                 // Hors ligne depuis > 30 min pendant les heures de travail (6h-22h)
                 if ($heureNow >= 360 && $heureNow <= 1320 && $minutesSansSignal > 30 && $minutesSansSignal < 120) {
                     $msg = "📡 $nom : perte de signal GPS depuis {$minutesSansSignal} minutes";
-                    if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'coupure_gps', $msg, "{$minutesSansSignal}min", 90)) {
+                    $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'coupure_gps', $msg, "{$minutesSansSignal}min", 90);
+                    if ($aid) {
                         clog("ALERTE coupure GPS — $nom"); $nbAlertes++;
                     }
                 }
@@ -228,7 +267,8 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                     $heuresSansSignal = $minutesSansSignal / 60;
                     if ($vitesse == 0 && $heuresSansSignal >= $dureeH) {
                         $msg = "🅿 $nom : immobile depuis " . round($heuresSansSignal, 1) . "h (règle : max {$dureeH}h pendant les heures de travail)";
-                        if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'immobilisation', $msg, round($heuresSansSignal,1).'h', 120)) {
+                        $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'immobilisation', $msg, round($heuresSansSignal,1).'h', 120);
+                        if ($aid) {
                             clog("ALERTE immobilisation — $nom"); $nbAlertes++;
                         }
                     }
@@ -250,8 +290,10 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                     $kmJour = round($kmJour);
                     if ($kmJour > $kmMax) {
                         $msg = "🛣 $nom : {$kmJour} km aujourd'hui (limite : {$kmMax} km/jour)";
-                        if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'km_jour', $msg, "{$kmJour}km", 240)) {
+                        $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'km_jour', $msg, "{$kmJour}km", 240);
+                        if ($aid) {
                             clog("ALERTE km/jour — $nom : {$kmJour}km"); $nbAlertes++;
+                            executeAction($db, $traccar, $r, $aid, $traccarOk);
                         }
                     }
                 } catch (Throwable $e) {}
@@ -269,8 +311,10 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                 $dist   = haversine($lat, $lng, $cLat, $cLng);
                 if ($dist > $rayon) {
                     $msg = "🗺 $nom : hors zone «{$zoneNom}» — à {$dist} km du centre (rayon autorisé : {$rayon} km)";
-                    if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'geofence', $msg, "{$dist}km", 60)) {
+                    $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'geofence', $msg, "{$dist}km", 60);
+                    if ($aid) {
                         clog("ALERTE geofence — $nom : {$dist}km hors zone"); $nbAlertes++;
+                        executeAction($db, $traccar, $r, $aid, $traccarOk);
                     }
                 }
                 break;
@@ -299,7 +343,8 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                         $minutesRalenti = (int)((time() - strtotime($debutRalenti)) / 60);
                         if ($minutesRalenti >= $dureeMax) {
                             $msg = "⛽ $nom : moteur en ralenti depuis {$minutesRalenti} minutes (limite : {$dureeMax} min)";
-                            if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'ralenti', $msg, "{$minutesRalenti}min", 60)) {
+                            $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'ralenti', $msg, "{$minutesRalenti}min", 60);
+                            if ($aid) {
                                 clog("ALERTE ralenti — $nom : {$minutesRalenti}min"); $nbAlertes++;
                             }
                         }
@@ -318,7 +363,8 @@ foreach ($reglesParVeh as $vehiculeId => $regles) {
                     $nb    = count($trips);
                     if ($nb > $nbMax) {
                         $msg = "🔢 $nom : {$nb} trajets effectués aujourd'hui (limite : {$nbMax})";
-                        if (insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'trajets_jour', $msg, "{$nb} trajets", 180)) {
+                        $aid = insertAlerte($db, $tenantId, $vehiculeId, $regleId, 'trajets_jour', $msg, "{$nb} trajets", 180);
+                        if ($aid) {
                             clog("ALERTE trajets/jour — $nom : {$nb}"); $nbAlertes++;
                         }
                     }

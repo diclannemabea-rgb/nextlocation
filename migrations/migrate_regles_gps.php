@@ -36,4 +36,20 @@ CREATE TABLE IF NOT EXISTS alertes_regles (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
 ");
 echo "Table alertes_regles creee.\n";
+
+// V2 — Ajout colonnes action automatique
+try {
+    $p->exec("ALTER TABLE regles_gps ADD COLUMN action_auto VARCHAR(30) NOT NULL DEFAULT 'notification_only' AFTER params");
+    echo "Colonne regles_gps.action_auto ajoutee.\n";
+} catch (Throwable $e) {
+    echo "regles_gps.action_auto: " . $e->getMessage() . "\n";
+}
+
+try {
+    $p->exec("ALTER TABLE alertes_regles ADD COLUMN action_executee VARCHAR(50) DEFAULT NULL AFTER valeur_declencheur");
+    echo "Colonne alertes_regles.action_executee ajoutee.\n";
+} catch (Throwable $e) {
+    echo "alertes_regles.action_executee: " . $e->getMessage() . "\n";
+}
+
 echo "Migration OK.\n";
