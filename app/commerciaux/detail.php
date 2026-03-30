@@ -79,14 +79,14 @@ if (!$commercial) {
 // Stats globales
 $stats = $model->getStats($id, $tenantId);
 
-// Commission payée (colonne optionnelle)
-$commPaidStmt = $db->prepare(
-    "SELECT COALESCE(SUM(commission_payee), 0) FROM locations
-     WHERE commercial_id = ? AND tenant_id = ? AND statut != 'annulee'"
-);
-$commPaidStmt->execute([$id, $tenantId]);
+// Commission payée — vérifier si la colonne existe
 $commissionPayee = 0.0;
 try {
+    $commPaidStmt = $db->prepare(
+        "SELECT COALESCE(SUM(commission_payee), 0) FROM locations
+         WHERE commercial_id = ? AND tenant_id = ? AND statut != 'annulee'"
+    );
+    $commPaidStmt->execute([$id, $tenantId]);
     $commissionPayee = (float) $commPaidStmt->fetchColumn();
 } catch (Throwable $e) {
     $commissionPayee = 0.0;
