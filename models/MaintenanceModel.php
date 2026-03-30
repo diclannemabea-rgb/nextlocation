@@ -119,9 +119,9 @@ class MaintenanceModel
         $stmt = $this->db->prepare(
             "SELECT
                 COUNT(*)                          AS total,
-                SUM(statut = 'planifie')          AS planifiees,
-                SUM(statut = 'en_cours')          AS en_cours,
-                SUM(statut = 'termine')           AS terminees,
+                SUM(CASE WHEN statut = 'planifie' THEN 1 ELSE 0 END)  AS planifiees,
+                SUM(CASE WHEN statut = 'en_cours' THEN 1 ELSE 0 END)  AS en_cours,
+                SUM(CASE WHEN statut = 'termine' THEN 1 ELSE 0 END)   AS terminees,
                 COALESCE(SUM(CASE WHEN statut = 'termine' THEN cout ELSE 0 END), 0) AS cout_total
              FROM maintenances
              WHERE tenant_id = ?"

@@ -72,8 +72,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $libMaint = ucfirst($maint['type']) . ' — maintenance #' . $id;
                 $db->prepare("INSERT INTO charges (tenant_id,vehicule_id,type,libelle,montant,date_charge) VALUES (?,?,'maintenance',?,?,CURDATE())")
                    ->execute([$tenantId, $maint['vehicule_id'], $libMaint, $cout]);
-                $db->prepare("UPDATE vehicules SET depenses_initiales = COALESCE(depenses_initiales,0) + ? WHERE id=? AND tenant_id=?")
-                   ->execute([$cout, $maint['vehicule_id'], $tenantId]);
+                // Dépenses calculées dynamiquement via SUM(charges) — plus de cumul dans depenses_initiales
             }
             if ($planVidange && strtolower($maint['type']) === 'vidange') {
                 $model->planifierProchaineVidange($maint['vehicule_id'], $tenantId, max($kmFait, (int)$maint['km_prevu']));
