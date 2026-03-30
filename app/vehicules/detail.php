@@ -91,10 +91,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     $sq->execute([$vehiculeId, $tenantId, $expFrom, $expTo]);
     foreach ($sq->fetchAll() as $row) fputcsv($out, [$row['date_charge'],$row['type'],$row['lib'],'0',number_format($row['montant'],0,'.',',')], ';');
 
-    // Maintenances
-    $sq = $db->prepare("SELECT date_prevue, 'Maintenance' as type, type as lib, 0, cout FROM maintenances WHERE vehicule_id=? AND tenant_id=? AND statut IN('fait','termine') AND date_prevue BETWEEN ? AND ? AND cout > 0");
-    $sq->execute([$vehiculeId, $tenantId, $expFrom, $expTo]);
-    foreach ($sq->fetchAll() as $row) fputcsv($out, [$row['date_prevue'],$row['type'],ucfirst($row['lib']),'0',number_format($row['cout'],0,'.',',')], ';');
+    // Maintenances déjà incluses dans charges (type='maintenance') — pas de double export
 
     fclose($out);
     exit;
@@ -110,14 +107,14 @@ $r->execute([$vehiculeId, $tenantId]); $revenusTaxi = (float)$r->fetchColumn();
 $r = $db->prepare("SELECT COALESCE(SUM(montant),0) FROM charges WHERE vehicule_id=? AND tenant_id=?");
 $r->execute([$vehiculeId, $tenantId]); $detailCharges = (float)$r->fetchColumn();
 
-$r = $db->prepare("SELECT COALESCE(SUM(cout),0) FROM maintenances WHERE vehicule_id=? AND tenant_id=? AND statut IN ('fait','termine')");
-$r->execute([$vehiculeId, $tenantId]); $detailMaint = (float)$r->fetchColumn();
+// maintenances terminées sont déjà dans charges — pas de double comptage
+$detailMaint = 0;
 
 $capital    = (float)($vehicule['capital_investi'] ?? 0);
 $recInitial = (float)($vehicule['recettes_initiales'] ?? 0);
 $depInitial = (float)($vehicule['depenses_initiales'] ?? 0);
 $totalRec   = $recInitial + $revenusLoc + $revenusTaxi;
-$totalDep   = $depInitial > 0 ? $depInitial : ($detailCharges + $detailMaint);
+$totalDep   = $depInitial + $detailCharges;
 $benefice   = $totalRec - $totalDep;
 $roi        = $capital > 0 ? round(($benefice - $capital) / $capital * 100, 1) : 0;
 
@@ -142,8 +139,7 @@ if ($vehicule['type_vehicule'] === 'taxi') {
 $r = $db->prepare("SELECT COALESCE(SUM(montant),0) FROM charges WHERE vehicule_id=? AND tenant_id=? AND date_charge BETWEEN ? AND ?");
 $r->execute([$vehiculeId, $tenantId, $moisDebut, $moisFin]); $moisDep = (float)$r->fetchColumn();
 
-$r = $db->prepare("SELECT COALESCE(SUM(cout),0) FROM maintenances WHERE vehicule_id=? AND tenant_id=? AND statut IN('fait','termine') AND date_prevue BETWEEN ? AND ?");
-$r->execute([$vehiculeId, $tenantId, $moisDebut, $moisFin]); $moisDep += (float)$r->fetchColumn();
+// maintenances terminées déjà dans charges — pas de double comptage
 $moisBen = $moisRec - $moisDep;
 
 // ─── ANALYSE FINANCIÈRE PAR PÉRIODE ──────────────────────────────────────────
@@ -864,10 +860,9 @@ $typeReglesLabels = [
         // Charges période
         $r = $db->prepare("SELECT COALESCE(SUM(montant),0) FROM charges WHERE vehicule_id=? AND tenant_id=? AND date_charge BETWEEN ? AND ?");
         $r->execute([$vehiculeId, $tenantId, $finFrom, $finTo]); $finDep = (float)$r->fetchColumn();
-        // Maintenances période
-        $r = $db->prepare("SELECT COALESCE(SUM(cout),0) FROM maintenances WHERE vehicule_id=? AND tenant_id=? AND statut IN('fait','termine') AND date_prevue BETWEEN ? AND ? AND cout > 0");
-        $r->execute([$vehiculeId, $tenantId, $finFrom, $finTo]); $finMaint = (float)$r->fetchColumn();
-        $finDepTotal = $finDep + $finMaint;
+        // maintenances terminées déjà dans charges — pas de double comptage
+        $finMaint = 0;
+        $finDepTotal = $finDep;
         $finBen      = $finRec - $finDepTotal;
         // Détail charges par catégorie
         $r = $db->prepare("SELECT COALESCE(type,'Autre') as cat, SUM(montant) as total FROM charges WHERE vehicule_id=? AND tenant_id=? AND date_charge BETWEEN ? AND ? GROUP BY cat ORDER BY total DESC");

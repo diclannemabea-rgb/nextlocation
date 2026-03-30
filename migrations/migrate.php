@@ -95,7 +95,7 @@ CREATE TABLE `tenants` (
     `adresse`         TEXT DEFAULT NULL,
     `logo`            VARCHAR(255) DEFAULT NULL,
     `type_usage`      ENUM('location','controle','les_deux') NOT NULL DEFAULT 'les_deux',
-    `plan`            ENUM('starter','pro','enterprise') NOT NULL DEFAULT 'starter',
+    `plan`            VARCHAR(20) NOT NULL DEFAULT 'starter',
     `actif`           TINYINT(1) NOT NULL DEFAULT 1,
     `created_at`      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at`      TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP
@@ -305,7 +305,7 @@ CREATE TABLE `maintenances` (
     `type`          VARCHAR(100) NOT NULL COMMENT 'Vidange, Révision, Pneus...',
     `km_prevu`      INT DEFAULT NULL,
     `date_prevue`   DATE DEFAULT NULL,
-    `statut`        ENUM('planifie','fait','en_retard') NOT NULL DEFAULT 'planifie',
+    `statut`        ENUM('planifie','en_cours','termine','en_retard','fait') NOT NULL DEFAULT 'planifie',
     `cout`          DECIMAL(10,2) DEFAULT 0,
     `notes`         TEXT DEFAULT NULL,
     `created_at`    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
