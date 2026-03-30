@@ -20,10 +20,10 @@ $tenantId = getTenantId();
 
 // ── Données selects ──────────────────────────────────────────────────────────
 $stVeh = $db->prepare("
-    SELECT id, nom, immatriculation, marque, modele, prix_location_jour, kilometrage_actuel, carburant_type
+    SELECT id, nom, immatriculation, marque, modele, prix_location_jour, kilometrage_actuel, carburant_type, type_vehicule, statut
     FROM vehicules
-    WHERE tenant_id = ? AND statut = 'disponible' AND type_vehicule = 'location'
-    ORDER BY nom
+    WHERE tenant_id = ? AND statut IN ('disponible','loue')
+    ORDER BY statut ASC, nom ASC
 ");
 $stVeh->execute([$tenantId]);
 $vehs = $stVeh->fetchAll(PDO::FETCH_ASSOC);
@@ -165,9 +165,10 @@ require_once BASE_PATH . '/includes/header.php';
     border: 1px solid #e2e8f0;
     border-radius: 8px;
     margin-bottom: 12px;
-    overflow: hidden;
+    overflow: visible;
 }
 .loc-section-head {
+    border-radius: 8px 8px 0 0;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -312,10 +313,16 @@ require_once BASE_PATH . '/includes/header.php';
                 <label>Véhicule disponible <span class="req">*</span></label>
                 <select name="vehicule_id" id="vehicule_id" class="fc" required>
                     <option value="">— Sélectionner un véhicule —</option>
-                    <?php foreach ($vehs as $v): ?>
-                    <option value="<?= $v['id'] ?>" <?= ($old['vehicule_id']??'') == $v['id'] ? 'selected':'' ?>>
-                        <?= sanitize($v['nom'].' – '.$v['immatriculation'].' ('.$v['marque'].' '.$v['modele'].')') ?>
-                        &nbsp;·&nbsp;<?= formatMoney((float)$v['prix_location_jour']) ?>/j
+                    <?php foreach ($vehs as $v):
+                        $vLabel = sanitize($v['nom'].' – '.$v['immatriculation'].' ('.$v['marque'].' '.$v['modele'].')');
+                        $vStatut = $v['statut'] === 'loue' ? ' [EN LOCATION]' : '';
+                    ?>
+                    <option value="<?= $v['id'] ?>"
+                            data-prix="<?= (int)$v['prix_location_jour'] ?>"
+                            data-km="<?= (int)$v['kilometrage_actuel'] ?>"
+                            <?= $v['statut'] === 'loue' ? 'disabled style="color:#94a3b8"' : '' ?>
+                            <?= ($old['vehicule_id']??'') == $v['id'] ? 'selected':'' ?>>
+                        <?= $vLabel ?> · <?= formatMoney((float)$v['prix_location_jour']) ?>/j<?= $vStatut ?>
                     </option>
                     <?php endforeach ?>
                 </select>
@@ -596,6 +603,23 @@ const hiddenId    = document.getElementById('client_id');
     }
 })();
 
+searchEl.addEventListener('focus', function() {
+    if (!this.value.trim()) {
+        // Afficher les 8 premiers clients au focus
+        const res = CLI.slice(0, 8);
+        if (res.length) {
+            dropEl.innerHTML = res.map(c => `
+                <div class="client-item" onclick="selectClient(${c.id},'${esc(c.nom)} ${esc(c.prenom)}','${esc(c.tel)}')">
+                    <div>
+                        <span class="ci-name">${esc(c.nom)} ${esc(c.prenom)}</span>
+                        ${c.tel ? `<span class="ci-meta"> · ${esc(c.tel)}</span>`:''}
+                    </div>
+                    ${c.email ? `<span class="ci-meta">${esc(c.email)}</span>`:''}
+                </div>`).join('');
+            dropEl.style.display = 'block';
+        }
+    }
+});
 searchEl.addEventListener('input', function() {
     const q = this.value.trim().toLowerCase();
     clearBtn.style.display = q ? 'block':'none';
