@@ -23,7 +23,7 @@ $tenantId = getTenantId();
 $stVehs = $db->prepare("
     SELECT id, nom, immatriculation, marque, modele, prix_location_jour, statut
     FROM vehicules
-    WHERE tenant_id=? AND statut='disponible'
+    WHERE tenant_id=? AND statut NOT IN ('maintenance','indisponible')
       AND (type_vehicule = 'location' OR type_vehicule IS NULL OR type_vehicule = '')
     ORDER BY nom
 ");
