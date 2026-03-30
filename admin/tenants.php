@@ -89,19 +89,14 @@ if ($search) { $where[] = '(t.nom_entreprise LIKE ? OR t.email LIKE ?)'; $params
 
 $whereSQL = $where ? 'WHERE '.implode(' AND ',$where) : '';
 
-$total = (int)$db->query("SELECT COUNT(*) FROM tenants t $whereSQL")->fetchColumn();
-// Note: inline params not safe for query(), using prepare for count with params
-if ($params) {
-    $cs = $db->prepare("SELECT COUNT(*) FROM tenants t $whereSQL");
-    $cs->execute($params);
-    $total = (int)$cs->fetchColumn();
-}
+$cs = $db->prepare("SELECT COUNT(*) FROM tenants t $whereSQL");
+$cs->execute($params);
+$total = (int)$cs->fetchColumn();
 $totalPages = (int)ceil($total/$perPage);
 
 $stmtList = $db->prepare("
     SELECT t.*,
            u.email      user_email,
-           u.password_plain user_password,
            (SELECT COUNT(*) FROM vehicules v WHERE v.tenant_id=t.id) nb_vehicules,
            a.plan abo_plan, a.date_fin abo_fin
     FROM tenants t
@@ -240,9 +235,6 @@ require_once BASE_PATH . '/includes/header.php';
         </td>
         <td>
             <div style="font-size:.78rem;color:#475569"><?= sanitize($t['user_email']??$t['email']??'') ?></div>
-            <?php if (!empty($t['user_password'])): ?>
-            <div style="margin-top:3px"><span class="pwd-cell"><?= sanitize($t['user_password']) ?></span></div>
-            <?php endif ?>
         </td>
         <td>
             <?php $p = $t['abo_plan']??$t['plan']??'';

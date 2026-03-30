@@ -30,7 +30,10 @@ function requireTenantAuth(): void {
         $_SESSION['tenant_plan']  = $row['plan'];
     } catch (\Throwable $e) {}
     if ((int)($_SESSION['tenant_actif'] ?? 1) === 0) redirect(BASE_URL . 'auth/compte_inactif.php');
-    if (!empty($_SESSION['abonnement_expire'])) redirect(BASE_URL . 'auth/abonnement_expire.php');
+    // Re-check abonnement from DB (may have been activated by admin since login)
+    $abonOk = checkAbonnement($db, $tid);
+    $_SESSION['abonnement_expire'] = !$abonOk;
+    if (!$abonOk) redirect(BASE_URL . 'auth/abonnement_expire.php');
 }
 
 function requireSuperAdmin(): void {
