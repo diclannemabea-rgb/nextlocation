@@ -145,9 +145,9 @@ $nbAlertes = $nbRetard + $nbDocs;
 
 // Compteurs globaux pour KPIs (sans filtre véhicule)
 $kpiCounts = $db->prepare("SELECT
-    SUM(statut='planifie') nb_planif,
-    SUM(statut='en_retard') nb_retard,
-    SUM(statut='termine') nb_termine,
+    SUM(CASE WHEN statut='planifie' THEN 1 ELSE 0 END) nb_planif,
+    SUM(CASE WHEN statut='en_retard' THEN 1 ELSE 0 END) nb_retard,
+    SUM(CASE WHEN statut='termine' THEN 1 ELSE 0 END) nb_termine,
     COUNT(*) nb_total
     FROM maintenances WHERE tenant_id=?");
 $kpiCounts->execute([$tenantId]);
@@ -499,9 +499,19 @@ require_once BASE_PATH . '/includes/header.php';
                 <?php endforeach ?>
             </div>
         </div>
-        <div class="maint-actions">
+        <div class="maint-actions" style="display:flex;gap:6px;flex-wrap:wrap">
+            <?php if ($aExpired || $aSoon): ?>
+            <a href="<?= BASE_URL ?>app/finances/charges.php?vehicule_id=<?= $doc['id'] ?>&type=assurance#ajouter" class="btn btn-sm btn-warning" title="Renouveler l'assurance">
+                <i class="fas fa-shield-halved"></i><span class="btn-txt"> Renouveler</span>
+            </a>
+            <?php endif ?>
+            <?php if ($vExpired || $vSoon): ?>
+            <a href="<?= BASE_URL ?>app/finances/charges.php?vehicule_id=<?= $doc['id'] ?>&type=vignette#ajouter" class="btn btn-sm btn-warning" title="Renouveler la vignette">
+                <i class="fas fa-stamp"></i><span class="btn-txt"> Renouveler</span>
+            </a>
+            <?php endif ?>
             <a href="<?= BASE_URL ?>app/vehicules/detail.php?id=<?= $doc['id'] ?>" class="btn btn-sm btn-ghost" title="Voir le véhicule">
-                <i class="fas fa-eye"></i><span class="btn-txt"> Voir</span>
+                <i class="fas fa-eye"></i>
             </a>
         </div>
     </div>

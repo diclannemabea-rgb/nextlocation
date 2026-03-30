@@ -854,7 +854,7 @@ function docLabel(string $d, string $today, string $in30): string {
                     <label class="form-label">Type <span style="color:red">*</span></label>
                     <select name="type" id="ch-type" class="form-control" onchange="onTypeChange(this.value)">
                         <?php foreach ($typesChargesManuel as $k=>$t): ?>
-                        <option value="<?= $k ?>"><?= $t['label'] ?></option>
+                        <option value="<?= $k ?>" <?= $filtreType===$k?'selected':'' ?>><?= $t['label'] ?></option>
                         <?php endforeach ?>
                     </select>
                 </div>
@@ -1110,10 +1110,12 @@ function ouvrirTerminer(id, label, kmSuggest, isKm) {
 function togglePlanNext(checked) {
     document.getElementById('mt-term-plan-fields').style.display = checked ? '' : 'none';
 }
-// Init km display if vehicle pre-selected
+// Init km display if vehicle pre-selected + init type if pre-selected from URL
 document.addEventListener('DOMContentLoaded', function() {
     var sel = document.getElementById('mt-veh-select');
     if (sel && sel.value) onMaintVehChange(sel);
+    var chType = document.getElementById('ch-type');
+    if (chType && chType.value) onTypeChange(chType.value);
 });
 JS;
 require_once BASE_PATH . '/includes/footer.php';
