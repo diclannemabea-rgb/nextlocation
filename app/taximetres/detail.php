@@ -22,7 +22,8 @@ if (!$taxiId) { redirect(BASE_URL . 'app/taximetres/liste.php'); }
 $sTaxi = $db->prepare("
     SELECT t.*, v.nom veh_nom, v.immatriculation, v.kilometrage_actuel,
            v.statut veh_statut, v.id vehicule_id,
-           v.marque, v.modele, v.couleur, v.annee
+           v.marque, v.modele, v.couleur, v.annee,
+           v.capital_investi, v.recettes_initiales, v.depenses_initiales
     FROM taximetres t
     JOIN vehicules v ON v.id = t.vehicule_id
     WHERE t.id = ? AND t.tenant_id = ?");
@@ -32,7 +33,154 @@ if (!$taxi) { setFlash(FLASH_ERROR, 'Taximantre introuvable.'); redirect(BASE_UR
 
 $tarif = (float)$taxi['tarif_journalier'];
 
-// ── Export CSV ─────────────────────────────────────────────────────────────────
+// ── Export Excel (CSV multi-feuilles simulé via séparateurs) ──────────────────
+if (($_GET['action'] ?? '') === 'export_excel') {
+    $nomChauffeur = trim($taxi['nom'].' '.($taxi['prenom'] ?? ''));
+
+    // Données paiements
+    $sExp = $db->prepare("SELECT date_paiement, statut_jour, montant, montant_du, montant_fonds,
+        mode_paiement, km_debut, km_fin, notes, created_at
+        FROM paiements_taxi WHERE taximetre_id=? AND tenant_id=? ORDER BY date_paiement ASC");
+    $sExp->execute([$taxiId, $tenantId]);
+    $allPaiements = $sExp->fetchAll(PDO::FETCH_ASSOC);
+
+    // Données contraventions
+    $sContraExp = $db->prepare("SELECT date_contr, description, montant, statut, created_at
+        FROM contraventions_taxi WHERE taximetre_id=? AND tenant_id=? AND statut!='efface' ORDER BY date_contr ASC");
+    $sContraExp->execute([$taxiId, $tenantId]);
+    $allContras = $sContraExp->fetchAll(PDO::FETCH_ASSOC);
+
+    // Données véhicule — charges + maintenances
+    $vid = $taxi['vehicule_id'];
+    $sChargesVeh = $db->prepare("SELECT date_charge, type, libelle, montant, notes FROM charges WHERE vehicule_id=? AND tenant_id=? ORDER BY date_charge ASC");
+    $sChargesVeh->execute([$vid, $tenantId]);
+    $chargesVeh = $sChargesVeh->fetchAll(PDO::FETCH_ASSOC);
+
+    $sMaintsVeh = $db->prepare("SELECT date_prevue, type, statut, cout, technicien, notes FROM maintenances WHERE vehicule_id=? AND tenant_id=? ORDER BY date_prevue ASC");
+    $sMaintsVeh->execute([$vid, $tenantId]);
+    $maintsVeh = $sMaintsVeh->fetchAll(PDO::FETCH_ASSOC);
+
+    // Recettes taxi sur ce véhicule
+    $sRecVeh = $db->prepare("SELECT COALESCE(SUM(montant),0) FROM paiements_taxi pt JOIN taximetres t ON t.id=pt.taximetre_id WHERE t.vehicule_id=? AND pt.tenant_id=?");
+    $sRecVeh->execute([$vid, $tenantId]);
+    $recettesVeh = (float)$sRecVeh->fetchColumn();
+
+    // Dépenses véhicule
+    $sDepVeh = $db->prepare("SELECT COALESCE(SUM(montant),0) FROM charges WHERE vehicule_id=? AND tenant_id=?");
+    $sDepVeh->execute([$vid, $tenantId]);
+    $depensesVeh = (float)$sDepVeh->fetchColumn();
+    $sDepMaint = $db->prepare("SELECT COALESCE(SUM(cout),0) FROM maintenances WHERE vehicule_id=? AND tenant_id=? AND statut='termine'");
+    $sDepMaint->execute([$vid, $tenantId]);
+    $depensesVeh += (float)$sDepMaint->fetchColumn();
+
+    $capitalVeh = (float)($taxi['capital_investi'] ?? 0);
+
+    // Jours d'exploitation
+    $sJoursExpl = $db->prepare("SELECT MIN(date_paiement) first_day, MAX(date_paiement) last_day, COUNT(DISTINCT date_paiement) nb_jours FROM paiements_taxi pt JOIN taximetres t ON t.id=pt.taximetre_id WHERE t.vehicule_id=? AND pt.tenant_id=?");
+    $sJoursExpl->execute([$vid, $tenantId]);
+    $exploData = $sJoursExpl->fetch(PDO::FETCH_ASSOC);
+
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="fiche_'.preg_replace('/\s+/','_',$nomChauffeur).'_'.date('Y-m-d').'.csv"');
+    $f = fopen('php://output','w');
+    fprintf($f, chr(0xEF).chr(0xBB).chr(0xBF));
+    $libStatut = ['paye'=>'Payé','non_paye'=>'Non payé','jour_off'=>'Jour off','panne'=>'Panne','accident'=>'Accident','maladie'=>'Maladie'];
+    $libContra = ['regle_fonds'=>'Réglé (fonds)','regle_versement'=>'Réglé (versement)','en_attente'=>'En attente (dette)'];
+
+    // ═══ FEUILLE 1 : RÉSUMÉ GLOBAL ═══
+    fputcsv($f, ['=== RÉSUMÉ GLOBAL — '.$nomChauffeur.' ==='], ';');
+    fputcsv($f, [], ';');
+    fputcsv($f, ['Chauffeur', $nomChauffeur], ';');
+    fputcsv($f, ['Téléphone', $taxi['telephone'] ?? '—'], ';');
+    fputcsv($f, ['Véhicule', $taxi['veh_nom'].' — '.$taxi['immatriculation']], ';');
+    fputcsv($f, ['Date début', formatDate($taxi['date_debut'])], ';');
+    fputcsv($f, ['Tarif journalier', $tarif.' FCFA'], ';');
+    fputcsv($f, [], ';');
+
+    // Calculs résumé
+    $totPercu = 0; $totDu = 0; $totFonds = 0; $jTrav = 0; $jPayes = 0; $jOff = 0;
+    foreach ($allPaiements as $p) {
+        if (in_array($p['statut_jour'],['paye','non_paye'])) { $jTrav++; $totDu += $tarif; }
+        if ($p['statut_jour'] === 'paye') { $jPayes++; $totPercu += (float)$p['montant']; }
+        else { $totPercu += (float)$p['montant']; }
+        if (in_array($p['statut_jour'],['jour_off','panne','accident','maladie'])) $jOff++;
+        $totFonds += (float)$p['montant_fonds'];
+    }
+    $totContra = 0; $nbContra = 0; $totContraDette = 0;
+    foreach ($allContras as $c) {
+        $totContra += (float)$c['montant']; $nbContra++;
+        if ($c['statut'] === 'en_attente') $totContraDette += (float)$c['montant'];
+    }
+
+    fputcsv($f, ['Jours travaillés', $jTrav], ';');
+    fputcsv($f, ['Jours payés', $jPayes], ';');
+    fputcsv($f, ['Jours off/panne/accident', $jOff], ';');
+    fputcsv($f, ['Total dû', $totDu.' FCFA'], ';');
+    fputcsv($f, ['Total perçu', $totPercu.' FCFA'], ';');
+    fputcsv($f, ['Dette versements', max(0,$totDu-$totPercu).' FCFA'], ';');
+    fputcsv($f, [], ';');
+    fputcsv($f, ['Fonds contravention cotisé', $totFonds.' FCFA'], ';');
+    fputcsv($f, ['Total contraventions', $totContra.' FCFA ('.$nbContra.' contravention(s))'], ';');
+    fputcsv($f, ['Solde fonds contravention', ($totFonds - $totContra + $totContraDette).' FCFA'], ';');
+    fputcsv($f, ['Dette contraventions', $totContraDette.' FCFA'], ';');
+    fputcsv($f, [], ';');
+    fputcsv($f, [], ';');
+
+    // ═══ FEUILLE 2 : MOUVEMENTS DÉTAILLÉS ═══
+    fputcsv($f, ['=== MOUVEMENTS DÉTAILLÉS ==='], ';');
+    fputcsv($f, [], ';');
+    fputcsv($f, ['--- Paiements journaliers ---'], ';');
+    fputcsv($f, ['Date','Statut','Montant perçu','Montant dû','Fonds contrav.','Mode paiement','Km début','Km fin','Notes'], ';');
+    foreach ($allPaiements as $r) {
+        fputcsv($f, [
+            date('d/m/Y', strtotime($r['date_paiement'])),
+            $libStatut[$r['statut_jour']] ?? $r['statut_jour'],
+            $r['montant'], $r['montant_du'], $r['montant_fonds'],
+            $r['mode_paiement'], $r['km_debut'] ?? '', $r['km_fin'] ?? '', $r['notes']
+        ], ';');
+    }
+    fputcsv($f, [], ';');
+    fputcsv($f, ['--- Contraventions ---'], ';');
+    fputcsv($f, ['Date','Description','Montant','Statut'], ';');
+    foreach ($allContras as $c) {
+        fputcsv($f, [
+            date('d/m/Y', strtotime($c['date_contr'])),
+            $c['description'], $c['montant'],
+            $libContra[$c['statut']] ?? $c['statut']
+        ], ';');
+    }
+    fputcsv($f, [], ';');
+    fputcsv($f, [], ';');
+
+    // ═══ FEUILLE 3 : ANALYSE VÉHICULE ═══
+    fputcsv($f, ['=== ANALYSE FINANCIÈRE VÉHICULE — '.$taxi['veh_nom'].' ('.$taxi['immatriculation'].') ==='], ';');
+    fputcsv($f, [], ';');
+    fputcsv($f, ['Capital investi', $capitalVeh.' FCFA'], ';');
+    fputcsv($f, ['Recettes cumulées', ($recettesVeh + (float)($taxi['recettes_initiales']??0)).' FCFA'], ';');
+    fputcsv($f, ['Dépenses cumulées', ($depensesVeh + (float)($taxi['depenses_initiales']??0)).' FCFA'], ';');
+    $profit = ($recettesVeh + (float)($taxi['recettes_initiales']??0)) - ($depensesVeh + (float)($taxi['depenses_initiales']??0));
+    fputcsv($f, ['Profit net', $profit.' FCFA'], ';');
+    $roi = $capitalVeh > 0 ? round($profit / $capitalVeh * 100, 1) : 0;
+    fputcsv($f, ['ROI', $roi.'%'], ';');
+    fputcsv($f, ['Jours exploitation', $exploData['nb_jours'] ?? 0], ';');
+    fputcsv($f, ['Période', ($exploData['first_day'] ? formatDate($exploData['first_day']).' → '.formatDate($exploData['last_day']) : '—')], ';');
+    fputcsv($f, [], ';');
+    fputcsv($f, ['--- Charges véhicule ---'], ';');
+    fputcsv($f, ['Date','Type','Libellé','Montant','Notes'], ';');
+    foreach ($chargesVeh as $ch) {
+        fputcsv($f, [date('d/m/Y',strtotime($ch['date_charge'])), $ch['type'], $ch['libelle'], $ch['montant'], $ch['notes']], ';');
+    }
+    fputcsv($f, [], ';');
+    fputcsv($f, ['--- Maintenances véhicule ---'], ';');
+    fputcsv($f, ['Date prévue','Type','Statut','Coût','Technicien','Notes'], ';');
+    foreach ($maintsVeh as $mt) {
+        fputcsv($f, [date('d/m/Y',strtotime($mt['date_prevue'])), $mt['type'], $mt['statut'], $mt['cout'], $mt['technicien'], $mt['notes']], ';');
+    }
+
+    fclose($f); exit;
+}
+
+// ── Export CSV simple (rétrocompat) ──────────────────────────────────────────
 if (($_GET['action'] ?? '') === 'export_csv') {
     $sExp = $db->prepare("SELECT date_paiement, statut_jour, montant, montant_du, montant_fonds,
         mode_paiement, km_debut, km_fin, notes, created_at
@@ -43,7 +191,7 @@ if (($_GET['action'] ?? '') === 'export_csv') {
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="taximantre_'.preg_replace('/\s+/','_',$nom).'_'.date('Y-m-d').'.csv"');
     $f = fopen('php://output','w');
-    fprintf($f, chr(0xEF).chr(0xBB).chr(0xBF)); // BOM UTF-8
+    fprintf($f, chr(0xEF).chr(0xBB).chr(0xBF));
     fputcsv($f, ['Date','Statut','Montant perçu','Montant dû','Fonds contrav.','Mode paiement','Km début','Km fin','Notes','Enregistré le'], ';');
     $libStatut = ['paye'=>'Payé','non_paye'=>'Non payé','jour_off'=>'Jour off','panne'=>'Panne','accident'=>'Accident'];
     foreach ($rows as $r) {
@@ -307,17 +455,21 @@ $detteExplicite = (int)$solde['jours_impaye'] * $tarif;
 $detteNonSaisis = $joursNonSaisis * $tarif;
 
 // ── Fonds contravention ───────────────────────────────────────────────────────
-$fondsTotal = (float)$solde['total_fonds'];
+$fondsTotal = (float)$solde['total_fonds']; // Total cotisé
+$sContraAll = $db->prepare("SELECT COALESCE(SUM(montant),0) FROM contraventions_taxi WHERE taximetre_id=? AND tenant_id=? AND statut != 'efface'");
+$sContraAll->execute([$taxiId, $tenantId]);
+$contraTotalMontant = (float)$sContraAll->fetchColumn(); // Total contraventions
 $sContraUsed = $db->prepare("SELECT COALESCE(SUM(montant),0) FROM contraventions_taxi WHERE taximetre_id=? AND tenant_id=? AND statut='regle_fonds'");
 $sContraUsed->execute([$taxiId, $tenantId]);
 $fondsUtilise = (float)$sContraUsed->fetchColumn();
-$fondsBalance = max(0, $fondsTotal - $fondsUtilise);
+$fondsBalance = $fondsTotal - $fondsUtilise; // Peut être négatif si dette contravention
 
-// Contraventions de ce taximantre
-$sContras = $db->prepare("SELECT id, description as libelle, montant, date_contr as date_charge, statut FROM contraventions_taxi
-    WHERE taximetre_id=? AND tenant_id=? AND statut != 'efface' ORDER BY date_contr DESC LIMIT 10");
+// Contraventions de ce taximantre (toutes, pas limite 10)
+$sContras = $db->prepare("SELECT id, description as libelle, montant, date_contr as date_charge, statut, notes FROM contraventions_taxi
+    WHERE taximetre_id=? AND tenant_id=? AND statut != 'efface' ORDER BY date_contr DESC");
 $sContras->execute([$taxiId, $tenantId]);
 $contraventions = $sContras->fetchAll(PDO::FETCH_ASSOC);
+$nbContraventions = count($contraventions);
 
 // Contravention dette = somme des contraventions en_attente (fonds insuffisant)
 $detteContra = 0;
@@ -325,6 +477,7 @@ foreach ($contraventions as $c) {
     if ($c['statut'] === 'en_attente') $detteContra += (float)$c['montant'];
 }
 $detteTotal = $dette + $detteContra;
+$fondsSolde = $fondsBalance - $detteContra; // Solde réel : positif = argent dispo, négatif = dette
 
 // ── Retard : vérifie si hier ou aujourd'hui non saisi ────────────────────────
 $hier     = date('Y-m-d', strtotime('-1 day'));
@@ -337,10 +490,28 @@ $statutAujourd = $sToday->fetchColumn();
 $retardHier    = ($taxi['statut'] === 'actif' && $hier >= $dateDebut && !$statutHier);
 $retardAujourd = ($taxi['statut'] === 'actif' && !$statutAujourd);
 
-// ── Historique (30 dernières lignes) ─────────────────────────────────────────
-$sHist = $db->prepare("SELECT * FROM paiements_taxi WHERE taximetre_id=? AND tenant_id=? ORDER BY date_paiement DESC LIMIT 30");
-$sHist->execute([$taxiId, $tenantId]);
+// ── Historique avec filtres ──────────────────────────────────────────────────
+$filtreDebut = $_GET['hd'] ?? '';
+$filtreFin   = $_GET['hf'] ?? '';
+$histSQL     = "SELECT *, 'paiement' as type_mouv FROM paiements_taxi WHERE taximetre_id=? AND tenant_id=?";
+$histParams  = [$taxiId, $tenantId];
+if ($filtreDebut) { $histSQL .= " AND date_paiement >= ?"; $histParams[] = $filtreDebut; }
+if ($filtreFin)   { $histSQL .= " AND date_paiement <= ?"; $histParams[] = $filtreFin; }
+$histSQL .= " ORDER BY date_paiement DESC";
+if (!$filtreDebut && !$filtreFin) $histSQL .= " LIMIT 30";
+$sHist = $db->prepare($histSQL);
+$sHist->execute($histParams);
 $historique = $sHist->fetchAll(PDO::FETCH_ASSOC);
+
+// Contraventions pour la même période (pour affichage fusionné)
+$contraHistSQL = "SELECT id, date_contr as date_paiement, description, montant, statut, 'contravention' as type_mouv FROM contraventions_taxi WHERE taximetre_id=? AND tenant_id=? AND statut!='efface'";
+$contraHistParams = [$taxiId, $tenantId];
+if ($filtreDebut) { $contraHistSQL .= " AND date_contr >= ?"; $contraHistParams[] = $filtreDebut; }
+if ($filtreFin)   { $contraHistSQL .= " AND date_contr <= ?"; $contraHistParams[] = $filtreFin; }
+$contraHistSQL .= " ORDER BY date_contr DESC";
+$sContraHist = $db->prepare($contraHistSQL);
+$sContraHist->execute($contraHistParams);
+$contraHistorique = $sContraHist->fetchAll(PDO::FETCH_ASSOC);
 
 // ── Résumé mensuel (6 derniers mois) ─────────────────────────────────────────
 $sMens = $db->prepare("SELECT DATE_FORMAT(date_paiement,'%Y-%m') m,
@@ -471,7 +642,7 @@ require_once BASE_PATH . '/includes/header.php';
         </div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <a href="?id=<?= $taxiId ?>&action=export_csv" class="btn btn-secondary btn-sm"><i class="fas fa-file-csv"></i> Exporter CSV</a>
+        <a href="?id=<?= $taxiId ?>&action=export_excel" class="btn btn-success btn-sm"><i class="fas fa-file-excel"></i> Export complet</a>
         <button onclick="openModal('modal-profil')" class="btn btn-ghost btn-sm"><i class="fas fa-edit"></i> Modifier</button>
         <button onclick="openModal('modal-vehicule')" class="btn btn-outline-primary btn-sm"><i class="fas fa-exchange-alt"></i> Changer de véhicule</button>
         <a href="<?= BASE_URL ?>app/taximetres/liste.php" class="btn btn-ghost btn-sm"><i class="fas fa-arrow-left"></i></a>
@@ -563,14 +734,14 @@ require_once BASE_PATH . '/includes/header.php';
         <div class="kbar"><div class="kbar-fill" style="width:<?= $totalDu > 0 ? min(100,round($totalPercu/$totalDu*100)) : 100 ?>%;background:#10b981"></div></div>
     </div>
     <!-- KPI 3 : Fonds contravention -->
-    <div class="kpi-vtc" style="border-left:3px solid #0d9488">
+    <div class="kpi-vtc" style="border-left:3px solid <?= $fondsSolde >= 0 ? '#0d9488' : '#ef4444' ?>">
         <div class="ki"><i class="fas fa-shield-alt"></i></div>
-        <div class="kl">Fonds contravention</div>
-        <div class="kv" style="color:<?= $fondsBalance > 0 ? '#0d9488' : '#94a3b8' ?>"><?= formatMoney($fondsBalance) ?></div>
+        <div class="kl">Solde fonds contravention</div>
+        <div class="kv" style="color:<?= $fondsSolde > 0 ? '#0d9488' : ($fondsSolde < 0 ? '#ef4444' : '#94a3b8') ?>"><?= $fondsSolde >= 0 ? formatMoney($fondsSolde) : '-'.formatMoney(abs($fondsSolde)) ?></div>
         <div class="ks">
-            Cotisé : <?= formatMoney($fondsTotal) ?> · Utilisé : <?= formatMoney($fondsUtilise) ?>
+            Cotisé : <?= formatMoney($fondsTotal) ?> · <?= $nbContraventions ?> contrav. (<?= formatMoney($contraTotalMontant) ?>)
         </div>
-        <div class="kbar"><div class="kbar-fill" style="width:<?= $fondsTotal > 0 ? min(100,round($fondsBalance/$fondsTotal*100)) : 0 ?>%;background:#0d9488"></div></div>
+        <div class="kbar"><div class="kbar-fill" style="width:<?= $fondsTotal > 0 ? min(100,max(0,round(max(0,$fondsSolde)/$fondsTotal*100))) : 0 ?>%;background:<?= $fondsSolde >= 0 ? '#0d9488' : '#ef4444' ?>"></div></div>
     </div>
     <!-- KPI 4 : Activité -->
     <div class="kpi-vtc" style="border-left:3px solid #8b5cf6">
@@ -679,10 +850,13 @@ require_once BASE_PATH . '/includes/header.php';
     <div style="display:flex;flex-direction:column;gap:12px">
 
         <!-- Fonds contravention -->
-        <div class="fonds-card">
-            <div class="fl"><i class="fas fa-shield-alt"></i> Fonds contravention</div>
-            <div class="fv"><?= formatMoney($fondsBalance) ?></div>
-            <div class="fs">Cumulé : <?= formatMoney($fondsTotal) ?> · Utilisé : <?= formatMoney($fondsUtilise) ?></div>
+        <div class="fonds-card" style="<?= $fondsSolde < 0 ? 'background:linear-gradient(135deg,#dc2626 0%,#991b1b 100%)' : '' ?>">
+            <div class="fl"><i class="fas fa-shield-alt"></i> Solde fonds contravention</div>
+            <div class="fv"><?= $fondsSolde >= 0 ? formatMoney($fondsSolde) : '-'.formatMoney(abs($fondsSolde)) ?></div>
+            <div class="fs">
+                Cotisé : <?= formatMoney($fondsTotal) ?> · Contraventions : <?= formatMoney($contraTotalMontant) ?> (<?= $nbContraventions ?>)
+                <?php if ($detteContra > 0): ?><br>Dette contrav. : <?= formatMoney($detteContra) ?><?php endif ?>
+            </div>
             <div style="margin-top:10px;display:flex;gap:8px">
                 <button onclick="openModal('modal-saisir')" style="background:rgba(255,255,255,.2);border:none;color:#fff;padding:5px 12px;border-radius:6px;font-size:.75rem;cursor:pointer;font-weight:600">
                     <i class="fas fa-plus-circle"></i> Cotiser ce jour
@@ -739,29 +913,33 @@ require_once BASE_PATH . '/includes/header.php';
             <div class="card-header" style="padding:10px 14px">
                 <h3 class="card-title" style="font-size:.82rem"><i class="fas fa-chart-bar"></i> Résumé 6 mois</h3>
             </div>
-            <table style="width:100%;font-size:.73rem">
+            <table style="width:100%;font-size:.73rem;border-collapse:collapse">
                 <thead>
                     <tr style="background:#f8fafc">
-                        <th style="padding:5px 10px;color:#94a3b8;font-weight:600;text-transform:uppercase;font-size:.63rem">Mois</th>
-                        <th style="padding:5px;text-align:center;color:#94a3b8;font-size:.63rem">Travaillés</th>
-                        <th style="padding:5px;text-align:right;color:#94a3b8;font-size:.63rem">Perçu</th>
+                        <th style="padding:5px 10px;color:#94a3b8;font-weight:600;text-transform:uppercase;font-size:.63rem;text-align:left">Mois</th>
+                        <th style="padding:5px;text-align:center;color:#94a3b8;font-size:.63rem">Jours</th>
                         <th style="padding:5px;text-align:right;color:#94a3b8;font-size:.63rem">Dû</th>
+                        <th style="padding:5px;text-align:right;color:#94a3b8;font-size:.63rem">Perçu</th>
+                        <th style="padding:5px;text-align:right;color:#94a3b8;font-size:.63rem">Solde</th>
+                        <th style="padding:5px 10px;text-align:right;color:#94a3b8;font-size:.63rem">Fonds</th>
                     </tr>
                 </thead>
                 <tbody>
                 <?php foreach ($resumeMensuel as $rm):
-                    $du  = $rm['jours_trav'] * $tarif;
-                    $diff= $rm['percu'] - $du;
+                    $du   = $rm['jours_trav'] * $tarif;
+                    $soldeM = (float)$rm['percu'] - $du;
                 ?>
                 <tr style="border-bottom:1px solid #f1f5f9">
                     <td style="padding:5px 10px;font-weight:600;color:#0f172a"><?= date('M Y', strtotime($rm['m'].'-01')) ?></td>
-                    <td style="padding:5px;text-align:center;color:#64748b"><?= $rm['jours_trav'] ?>j</td>
+                    <td style="padding:5px;text-align:center;color:#64748b"><?= $rm['jours_payes'] ?>/<?= $rm['jours_trav'] ?></td>
+                    <td style="padding:5px;text-align:right;color:#64748b"><?= number_format($du,0,',',' ') ?></td>
                     <td style="padding:5px;text-align:right;color:#10b981;font-weight:600"><?= number_format((float)$rm['percu'],0,',',' ') ?></td>
-                    <td style="padding:5px 10px;text-align:right;font-weight:700;color:<?= $diff >= 0 ? '#10b981' : '#ef4444' ?>"><?= number_format($du,0,',',' ') ?></td>
+                    <td style="padding:5px;text-align:right;font-weight:700;color:<?= $soldeM >= 0 ? '#10b981' : '#ef4444' ?>"><?= ($soldeM >= 0 ? '+' : '') . number_format($soldeM,0,',',' ') ?></td>
+                    <td style="padding:5px 10px;text-align:right;color:#0d9488"><?= (float)$rm['fonds'] > 0 ? number_format((float)$rm['fonds'],0,',',' ') : '—' ?></td>
                 </tr>
                 <?php endforeach ?>
                 <?php if (empty($resumeMensuel)): ?>
-                <tr><td colspan="4" style="padding:12px;text-align:center;color:#94a3b8">Aucune donnée</td></tr>
+                <tr><td colspan="6" style="padding:12px;text-align:center;color:#94a3b8">Aucune donnée</td></tr>
                 <?php endif ?>
                 </tbody>
             </table>
@@ -816,40 +994,61 @@ require_once BASE_PATH . '/includes/header.php';
 <?php endif ?>
 
 <!-- ════════════════════════════════════════════════════════════════
-     HISTORIQUE COMPLET
+     HISTORIQUE COMPLET — MOUVEMENTS FUSIONNÉS
 ════════════════════════════════════════════════════════════════ -->
 <div class="card" style="margin-bottom:14px">
-    <div class="card-header">
-        <h3 class="card-title"><i class="fas fa-history"></i> Historique des journées <span style="font-weight:400;font-size:.78rem;color:#94a3b8">(30 dernières)</span></h3>
-        <a href="?id=<?= $taxiId ?>&action=export_csv" class="btn btn-sm btn-secondary"><i class="fas fa-file-csv"></i> CSV complet</a>
+    <div class="card-header" style="flex-wrap:wrap;gap:8px">
+        <h3 class="card-title"><i class="fas fa-history"></i> Historique des mouvements <?php if (!$filtreDebut && !$filtreFin): ?><span style="font-weight:400;font-size:.78rem;color:#94a3b8">(30 derniers)</span><?php endif ?></h3>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <form method="GET" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <input type="hidden" name="id" value="<?= $taxiId ?>">
+                <input type="hidden" name="mois" value="<?= $moisCal ?>">
+                <input type="date" name="hd" class="form-control" style="width:130px;font-size:.75rem;padding:5px 8px" value="<?= sanitize($filtreDebut) ?>" placeholder="Début">
+                <input type="date" name="hf" class="form-control" style="width:130px;font-size:.75rem;padding:5px 8px" value="<?= sanitize($filtreFin) ?>" placeholder="Fin">
+                <button type="submit" class="btn btn-sm btn-primary">Filtrer</button>
+                <?php if ($filtreDebut || $filtreFin): ?>
+                <a href="?id=<?= $taxiId ?>&mois=<?= $moisCal ?>" class="btn btn-sm btn-secondary">Reset</a>
+                <?php endif ?>
+            </form>
+            <a href="?id=<?= $taxiId ?>&action=export_excel" class="btn btn-sm btn-success"><i class="fas fa-file-excel"></i> Export Excel</a>
+        </div>
     </div>
     <div class="table-responsive">
         <table class="table hist-table">
             <thead>
                 <tr>
                     <th>Date</th>
-                    <th>Statut</th>
+                    <th>Type</th>
+                    <th>Statut / Description</th>
                     <th style="text-align:right">Dû</th>
                     <th style="text-align:right">Perçu</th>
-                    <th style="text-align:right">Solde jour</th>
+                    <th style="text-align:right">Solde</th>
                     <th style="text-align:right">Fonds</th>
-                    <th>Mode</th>
-                    <th>Km</th>
                     <th>Notes</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
             <?php
-            $libStatut2 = ['paye'=>'Payé','non_paye'=>'Non payé','jour_off'=>'Jour off','panne'=>'Panne','accident'=>'Accident'];
-            $rowClass   = ['paye'=>'row-paye','non_paye'=>'row-non_paye','jour_off'=>'row-off','panne'=>'row-off','accident'=>'row-non_paye'];
-            foreach ($historique as $h):
-                $du      = in_array($h['statut_jour'],['paye','non_paye']) ? $tarif : 0;
-                $soldeJ  = (float)$h['montant'] - $du;
-                $cls     = $rowClass[$h['statut_jour']] ?? '';
+            $libStatut2 = ['paye'=>'Payé','non_paye'=>'Non payé','jour_off'=>'Jour off','panne'=>'Panne','accident'=>'Accident','maladie'=>'Maladie'];
+            $rowClass   = ['paye'=>'row-paye','non_paye'=>'row-non_paye','jour_off'=>'row-off','panne'=>'row-off','accident'=>'row-non_paye','maladie'=>'row-off'];
+
+            // Fusionner paiements + contraventions et trier par date desc
+            $mouvements = [];
+            foreach ($historique as $h) { $h['sort_date'] = $h['date_paiement']; $h['type_mouv'] = 'paiement'; $mouvements[] = $h; }
+            foreach ($contraHistorique as $c) { $c['sort_date'] = $c['date_paiement']; $c['type_mouv'] = 'contravention'; $mouvements[] = $c; }
+            usort($mouvements, function($a,$b){ return strcmp($b['sort_date'], $a['sort_date']); });
+
+            foreach ($mouvements as $mv):
+                if ($mv['type_mouv'] === 'paiement'):
+                    $h = $mv;
+                    $du      = in_array($h['statut_jour'],['paye','non_paye']) ? $tarif : 0;
+                    $soldeJ  = (float)$h['montant'] - $du;
+                    $cls     = $rowClass[$h['statut_jour']] ?? '';
             ?>
             <tr class="<?= $cls ?>">
                 <td style="font-weight:600;white-space:nowrap"><?= formatDate($h['date_paiement']) ?></td>
+                <td><span style="font-size:.65rem;font-weight:600;color:#64748b;text-transform:uppercase">Journée</span></td>
                 <td>
                     <span class="cal-statut s-<?= $h['statut_jour'] ?>" style="width:auto;padding:2px 8px;font-size:.67rem">
                         <?= $libStatut2[$h['statut_jour']] ?? $h['statut_jour'] ?>
@@ -862,31 +1061,61 @@ require_once BASE_PATH . '/includes/header.php';
                 <td style="text-align:right;font-weight:700;color:<?= $soldeJ >= 0 ? '#10b981' : '#ef4444' ?>">
                     <?= $du > 0 ? (($soldeJ >= 0 ? '+' : '').formatMoney($soldeJ)) : '—' ?>
                 </td>
-                <td style="text-align:right;color:#0d9488"><?= (float)$h['montant_fonds'] > 0 ? formatMoney((float)$h['montant_fonds']) : '—' ?></td>
-                <td style="color:#64748b;font-size:.72rem;text-transform:capitalize"><?= sanitize($h['mode_paiement'] ?? '') ?></td>
-                <td style="font-size:.72rem;color:#94a3b8">
-                    <?= $h['km_debut'] ? number_format((int)$h['km_debut'],0,',',' ').'→'.number_format((int)$h['km_fin'],0,',',' ') : '—' ?>
+                <td style="text-align:right;color:#0d9488"><?= (float)($h['montant_fonds']??0) > 0 ? '+'.formatMoney((float)$h['montant_fonds']) : '—' ?></td>
+                <td style="font-size:.72rem;color:#94a3b8;max-width:120px;overflow:hidden;text-overflow:ellipsis">
+                    <?= $h['km_debut'] ? number_format((int)$h['km_debut'],0,',',' ').'→'.number_format((int)$h['km_fin'],0,',',' ').' · ' : '' ?><?= sanitize($h['notes'] ?? '') ?>
                 </td>
-                <td style="font-size:.72rem;color:#94a3b8;max-width:120px;overflow:hidden;text-overflow:ellipsis"><?= sanitize($h['notes'] ?? '') ?></td>
                 <td>
                     <button class="btn btn-sm btn-ghost" onclick="ouvrirSaisir('<?= $h['date_paiement'] ?>',<?= htmlspecialchars(json_encode($h)) ?>)" title="Corriger">
                         <i class="fas fa-edit"></i>
                     </button>
                 </td>
             </tr>
-            <?php endforeach ?>
-            <?php if (empty($historique)): ?>
-            <tr><td colspan="10" style="text-align:center;color:#94a3b8;padding:30px">Aucune journée enregistrée</td></tr>
+            <?php else:
+                    $c = $mv;
+                    $libContraStatut = ['regle_fonds'=>'Fonds','regle_versement'=>'Versement','en_attente'=>'Dette'];
+                    $colorContra     = ['regle_fonds'=>'#0d9488','regle_versement'=>'#10b981','en_attente'=>'#ef4444'];
+                    $bgContra        = ['regle_fonds'=>'#f0fdfa','regle_versement'=>'#f0fdf4','en_attente'=>'#fef2f2'];
+            ?>
+            <tr style="background:<?= $bgContra[$c['statut']] ?? '#fff' ?>">
+                <td style="font-weight:600;white-space:nowrap"><?= formatDate($c['date_paiement']) ?></td>
+                <td><span style="font-size:.65rem;font-weight:700;color:#8b5cf6;text-transform:uppercase"><i class="fas fa-gavel"></i> Contrav.</span></td>
+                <td style="font-size:.78rem"><?= sanitize($c['description'] ?? '') ?></td>
+                <td style="text-align:right">—</td>
+                <td style="text-align:right">—</td>
+                <td style="text-align:right;font-weight:700;color:<?= $colorContra[$c['statut']] ?? '#64748b' ?>">-<?= formatMoney((float)$c['montant']) ?></td>
+                <td style="text-align:right">
+                    <span style="font-size:.65rem;font-weight:700;padding:2px 6px;border-radius:4px;background:<?= $bgContra[$c['statut']] ?? '#f1f5f9' ?>;color:<?= $colorContra[$c['statut']] ?? '#64748b' ?>">
+                        <?= $libContraStatut[$c['statut']] ?? $c['statut'] ?>
+                    </span>
+                </td>
+                <td style="font-size:.72rem;color:#94a3b8"><?= sanitize($c['notes'] ?? '') ?></td>
+                <td>
+                    <?php if ($c['statut'] === 'en_attente'): ?>
+                    <form method="POST" style="display:inline">
+                        <?= csrfField() ?>
+                        <input type="hidden" name="action" value="regler_contravention">
+                        <input type="hidden" name="contra_id" value="<?= $c['id'] ?>">
+                        <button type="submit" class="btn btn-sm btn-ghost" style="color:#10b981" onclick="return confirm('Marquer réglée ?')" title="Marquer réglée">
+                            <i class="fas fa-check"></i>
+                        </button>
+                    </form>
+                    <?php endif ?>
+                </td>
+            </tr>
+            <?php endif; endforeach ?>
+            <?php if (empty($mouvements)): ?>
+            <tr><td colspan="9" style="text-align:center;color:#94a3b8;padding:30px">Aucun mouvement<?= ($filtreDebut || $filtreFin) ? ' pour cette période' : '' ?></td></tr>
             <?php endif ?>
             </tbody>
             <tfoot style="background:#f8fafc;font-size:.78rem;font-weight:700">
                 <tr>
-                    <td colspan="2">TOTAL</td>
+                    <td colspan="3">TOTAL GLOBAL</td>
                     <td style="text-align:right;color:#64748b"><?= formatMoney($totalDu) ?></td>
                     <td style="text-align:right;color:#10b981"><?= formatMoney($totalPercu) ?></td>
                     <td style="text-align:right;color:<?= $detteTotal > 0 ? '#ef4444' : '#10b981' ?>"><?= $detteTotal > 0 ? '-'.formatMoney($detteTotal) : '+'.formatMoney($totalPercu - $totalDu) ?></td>
                     <td style="text-align:right;color:#0d9488"><?= formatMoney($fondsTotal) ?></td>
-                    <td colspan="4"></td>
+                    <td colspan="2"></td>
                 </tr>
             </tfoot>
         </table>
