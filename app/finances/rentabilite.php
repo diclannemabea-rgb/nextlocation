@@ -178,7 +178,6 @@ for ($i = 11; $i >= 0; $i--) {
     $m = date('Y-m', strtotime("-$i months"));
     $ca = ($caLocMois[$m] ?? 0) + ($caTaxiMois[$m] ?? 0);
     $ch = ($chMois[$m] ?? 0) + ($deMois[$m] ?? 0);
-    $joursM = cal_days_in_month(CAL_GREGORIAN, (int)date('m', strtotime("$m-01")), (int)date('Y', strtotime("$m-01")));
     $perfMensuelle[] = [
         'mois'  => date('M Y', strtotime("$m-01")),
         'ca'    => $ca,
