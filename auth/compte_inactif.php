@@ -29,8 +29,8 @@ $base = "Bonjour FlotteCar ! Je veux activer mon compte.\n\n"
       . "🔗 *Lien :* " . $loginUrl . "\n"
       . "🆔 *ID :* #" . $tenantId . "\n\n";
 
-$waUrlMensuel = 'https://wa.me/' . ADMIN_WA . '?text=' . rawurlencode($base . "💳 *Plan choisi :* Mensuel — *20 000 FCFA* · Merci 🙏");
-$waUrlAnnuel  = 'https://wa.me/' . ADMIN_WA . '?text=' . rawurlencode($base . "💳 *Plan choisi :* Annuel — *150 000 FCFA* · Merci 🙏");
+$waUrlMensuel = 'https://wa.me/' . ADMIN_WA . '?text=' . rawurlencode($base . "💳 *Plan choisi :* Mensuel — *15 000 FCFA* · Merci 🙏");
+$waUrlAnnuel  = 'https://wa.me/' . ADMIN_WA . '?text=' . rawurlencode($base . "💳 *Plan choisi :* Annuel — *120 000 FCFA* · Merci 🙏");
 ?>
 <!DOCTYPE html>
 <html lang="fr">
@@ -143,7 +143,7 @@ $waUrlAnnuel  = 'https://wa.me/' . ADMIN_WA . '?text=' . rawurlencode($base . "�
     <a href="<?= $waUrlMensuel ?>" target="_blank" class="card">
         <div class="card-body">
             <div class="plan-name">Mensuel</div>
-            <div class="price">20 000 <span class="price-currency">FCFA</span></div>
+            <div class="price">15 000 <span class="price-currency">FCFA</span></div>
             <div class="price-period">par mois · sans engagement</div>
         </div>
         <span class="card-cta blue"><i class="fab fa-whatsapp"></i> Choisir ce plan</span>
@@ -153,9 +153,9 @@ $waUrlAnnuel  = 'https://wa.me/' . ADMIN_WA . '?text=' . rawurlencode($base . "�
         <div class="badge-best">Meilleure offre</div>
         <div class="card-body">
             <div class="plan-name">Annuel</div>
-            <div class="price">150 000 <span class="price-currency">FCFA</span></div>
+            <div class="price">120 000 <span class="price-currency">FCFA</span></div>
             <div class="price-period">par an · paiement unique</div>
-            <div class="savings">Économie de 90 000 FCFA</div>
+            <div class="savings">Économie de 60 000 FCFA</div>
         </div>
         <span class="card-cta purple"><i class="fab fa-whatsapp"></i> Choisir ce plan</span>
     </a>
