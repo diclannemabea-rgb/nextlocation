@@ -32,10 +32,9 @@ if ($filtreMois) {
 }
 if (!$filtreTo) $filtreTo = date('Y-m-d');
 
-// ── Export Excel ──────────────────────────────────────────────────────────────
-if (isset($_GET['export']) && $_GET['export'] === 'excel') {
-    require_once BASE_PATH . '/vendor/autoload.php';
-    exportExcel($db, $tenantId, $filtreFrom, $filtreTo, $filtreVid);
+// ── Export Excel (HTML XLS — pas de dépendance vendor) ───────────────────────
+if (isset($_GET['export'])) {
+    exportHtmlXls($db, $tenantId, $filtreFrom, $filtreTo, $filtreVid, $_GET['export']);
     exit;
 }
 
@@ -314,6 +313,26 @@ $sStatL = $db->prepare("SELECT COUNT(*) nb, COALESCE(AVG(nombre_jours),0) duree_
 $sStatL->execute([$tenantId]);
 $statLoc = $sStatL->fetch(PDO::FETCH_ASSOC);
 
+// ── Détail locations (vue web) ────────────────────────────────────────────────
+$sLocDet = $db->prepare("SELECT p.created_at, CONCAT(c.nom,' ',c.prenom) client, c.telephone,
+    v.nom veh, v.immatriculation immat, p.montant, p.mode_paiement, p.reference
+    FROM paiements p JOIN locations l ON l.id=p.location_id
+    JOIN clients c ON c.id=l.client_id JOIN vehicules v ON v.id=l.vehicule_id
+    WHERE p.tenant_id=? AND p.created_at BETWEEN ? AND ?" . ($filtreVid?" AND l.vehicule_id=$filtreVid":'') . "
+    ORDER BY p.created_at DESC LIMIT 100");
+$sLocDet->execute([$tenantId, $filtreFrom, $filtreTo]);
+$locDetail = $sLocDet->fetchAll(PDO::FETCH_ASSOC);
+
+// ── Détail taxi (vue web) ──────────────────────────────────────────────────────
+$sTaxiDet = $db->prepare("SELECT pt.date_paiement, CONCAT(tx.nom,' ',tx.prenom) chauffeur,
+    v.nom veh, v.immatriculation immat, pt.montant, pt.mode_paiement, pt.statut_jour, pt.notes
+    FROM paiements_taxi pt JOIN taximetres tx ON tx.id=pt.taximetre_id
+    JOIN vehicules v ON v.id=tx.vehicule_id
+    WHERE pt.tenant_id=? AND pt.date_paiement BETWEEN ? AND ?" . ($filtreVid?" AND tx.vehicule_id=$filtreVid":'') . "
+    ORDER BY pt.date_paiement DESC LIMIT 100");
+$sTaxiDet->execute([$tenantId, $filtreFrom, $filtreTo]);
+$taxiDetail = $sTaxiDet->fetchAll(PDO::FETCH_ASSOC);
+
 // ── Dépenses entreprise liste ─────────────────────────────────────────────────
 $depEntListe = [];
 try {
@@ -326,35 +345,46 @@ try {
 } catch (Throwable $e) {}
 
 // ── Caisse config ─────────────────────────────────────────────────────────────
-$sCaisse = $db->prepare("SELECT * FROM caisse_config WHERE tenant_id=?");
-$sCaisse->execute([$tenantId]);
-$caisse = $sCaisse->fetch(PDO::FETCH_ASSOC);
-$soldeInitial = $caisse ? (float)$caisse['solde_initial'] : 0;
-$soldeCaisse  = $soldeInitial + $totalRec - $totalDep;
+$soldeInitial = 0; $soldeCaisse = 0;
+try {
+    $sCaisse = $db->prepare("SELECT * FROM caisse_config WHERE tenant_id=?");
+    $sCaisse->execute([$tenantId]);
+    $caisse = $sCaisse->fetch(PDO::FETCH_ASSOC);
+    $soldeInitial = $caisse ? (float)$caisse['solde_initial'] : 0;
+} catch (Throwable $e) {}
+$soldeCaisse = $soldeInitial + $totalRec - $totalDep;
 
 $pageTitle  = 'Rentabilité & Analyses';
 $activePage = 'finances';
 require_once BASE_PATH . '/includes/header.php';
 ?>
 <style>
-.rnt-grid5{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
-.rnt-grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
-.rnt-grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+/* ── Grilles KPI ─────────────────────────────── */
+.kpi-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;margin-bottom:12px}
 .rnt-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
-@media(max-width:1100px){.rnt-grid5{grid-template-columns:repeat(3,1fr)}}
-@media(max-width:900px){.rnt-grid5,.rnt-grid4,.rnt-grid3{grid-template-columns:1fr 1fr}.rnt-grid2{grid-template-columns:1fr}}
-@media(max-width:600px){.rnt-grid5,.rnt-grid4,.rnt-grid3,.rnt-grid2{grid-template-columns:1fr}}
+@media(max-width:1200px){.kpi-grid{grid-template-columns:repeat(5,1fr)}}
+@media(max-width:900px){.kpi-grid{grid-template-columns:repeat(3,1fr)}.rnt-grid2{grid-template-columns:1fr}}
+@media(max-width:480px){.kpi-grid{grid-template-columns:repeat(3,1fr)}}
 
-.kpi{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;position:relative;overflow:hidden}
-.kpi .ki{position:absolute;right:10px;top:10px;font-size:1.8rem;opacity:.07}
-.kpi .kl{font-size:.66rem;color:#64748b;text-transform:uppercase;letter-spacing:.05em;font-weight:700}
-.kpi .kv{font-size:1.2rem;font-weight:800;margin:4px 0 2px;color:#0f172a}
-.kpi .ks{font-size:.7rem;color:#94a3b8}
-.kpi.primary{border-left:3px solid #0d9488}.kpi.success{border-left:3px solid #16a34a}
-.kpi.danger{border-left:3px solid #dc2626}.kpi.warning{border-left:3px solid #d97706}
-.kpi.info{border-left:3px solid #0891b2}.kpi.purple{border-left:3px solid #7c3aed}
+/* ── KPI carré coloré ────────────────────────── */
+.kpi{border-radius:10px;padding:12px 10px 10px;position:relative;overflow:hidden;transition:box-shadow .2s;text-align:center}
+.kpi:hover{box-shadow:0 3px 12px rgba(0,0,0,.12)}
+.kpi .kl{font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;font-weight:700;opacity:.85;line-height:1.2}
+.kpi .kv{font-size:1.05rem;font-weight:800;margin:5px 0 3px;line-height:1;word-break:break-all}
+.kpi .ks{font-size:.62rem;opacity:.75;margin-top:2px;line-height:1.2}
+/* couleurs de fond */
+.kpi.primary{background:#0d9488;color:#fff}
+.kpi.success{background:#16a34a;color:#fff}
+.kpi.danger {background:#dc2626;color:#fff}
+.kpi.warning{background:#d97706;color:#fff}
+.kpi.info   {background:#0891b2;color:#fff}
+.kpi.purple {background:#7c3aed;color:#fff}
+.kpi.slate  {background:#475569;color:#fff}
+.kpi.rose   {background:#e11d48;color:#fff}
+.kpi.teal   {background:#0f766e;color:#fff}
 
-.sec-title{font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin:18px 0 8px;display:flex;align-items:center;gap:6px}
+/* ── Misc ────────────────────────────────────── */
+.sec-title{font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin:16px 0 8px;display:flex;align-items:center;gap:6px}
 .sec-title::after{content:'';flex:1;height:1px;background:#e2e8f0}
 
 .filter-bar{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
@@ -369,22 +399,14 @@ require_once BASE_PATH . '/includes/header.php';
 .tbl-compact tr:last-child td{border-bottom:none}
 .tbl-compact tbody tr:hover{background:#f8fafc}
 
-.chart-bar-wrap{display:flex;align-items:flex-end;gap:4px;height:140px;padding:0 4px}
-.chart-bar-group{display:flex;gap:2px;align-items:flex-end;flex:1}
-.chart-bar{border-radius:3px 3px 0 0;min-width:8px;transition:opacity .2s;cursor:pointer;position:relative}
-.chart-bar:hover{opacity:.8}
-.chart-bar-label{font-size:.55rem;color:#94a3b8;text-align:center;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.chart-x-labels{display:flex;gap:4px;padding:0 4px}
-.chart-x-labels span{flex:1;font-size:.55rem;color:#94a3b8;text-align:center}
-
 .badge-sm{display:inline-block;padding:2px 7px;border-radius:99px;font-size:.65rem;font-weight:700}
 .badge-sm.green{background:#dcfce7;color:#16a34a}
 .badge-sm.red{background:#fee2e2;color:#dc2626}
 .badge-sm.yellow{background:#fef9c3;color:#b45309}
 .badge-sm.blue{background:#dbeafe;color:#0d9488}
 
-.prog-bar{height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-top:4px}
-.prog-fill{height:6px;border-radius:3px}
+.prog-bar{height:6px;background:rgba(255,255,255,.3);border-radius:3px;overflow:hidden;margin-top:4px}
+.prog-fill{height:6px;border-radius:3px;background:rgba(255,255,255,.7)}
 
 .albox{border-radius:8px;padding:10px 14px;display:flex;gap:10px;align-items:flex-start;margin-bottom:6px}
 .albox.warn{background:#fff7ed;border:1px solid #fed7aa}
@@ -394,7 +416,7 @@ require_once BASE_PATH . '/includes/header.php';
 .albox .als{font-size:.75rem;margin-top:2px;color:#64748b}
 
 .tab-nav{display:flex;gap:0;border-bottom:2px solid #e2e8f0;margin-bottom:16px;overflow-x:auto}
-.tab-btn{padding:9px 16px;font-size:.78rem;font-weight:600;color:#64748b;border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap;transition:all .2s}
+.tab-btn{padding:9px 14px;font-size:.76rem;font-weight:600;color:#64748b;border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap;transition:all .2s}
 .tab-btn.active{color:#0d9488;border-bottom-color:#0d9488}
 .tab-panel{display:none}.tab-panel.active{display:block}
 
@@ -406,9 +428,6 @@ require_once BASE_PATH . '/includes/header.php';
     .tbl-compact tr{display:block;border:1px solid #e2e8f0;border-radius:8px;padding:10px;margin-bottom:10px;background:#fff}
     .tbl-compact td{display:flex;justify-content:space-between;padding:4px 0;border:none}
     .tbl-compact td::before{content:attr(data-label);font-weight:600;color:#64748b;font-size:.72rem}
-    .tab-nav{overflow-x:auto}
-    .tab-btn{padding:8px 12px;font-size:.72rem}
-    .chart-bar-wrap{height:100px}
     .albox{flex-direction:column}
 }
 </style>
@@ -419,8 +438,29 @@ require_once BASE_PATH . '/includes/header.php';
         <p class="page-subtitle">Tableau de bord financier complet</p>
     </div>
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <a href="?<?= http_build_query(array_merge($_GET, ['export'=>'excel'])) ?>"
-           class="btn btn-success btn-sm">⬇ Export Excel</a>
+        <?php
+        $qBase = ['vehicule_id'=>$filtreVid,'from'=>$filtreFrom,'to'=>$filtreTo];
+        ?>
+        <div style="position:relative;display:inline-block" id="exp-menu-wrap">
+            <button class="btn btn-success btn-sm" onclick="toggleExpMenu()">⬇ Exporter ▾</button>
+            <div id="exp-menu" style="display:none;position:absolute;right:0;top:110%;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);min-width:220px;z-index:200;padding:6px 0">
+                <a href="?<?= http_build_query(array_merge($qBase,['export'=>'global'])) ?>"
+                   style="display:flex;align-items:center;gap:8px;padding:9px 16px;font-size:.78rem;color:#0f172a;text-decoration:none;white-space:nowrap" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+                   📊 Rapport global complet</a>
+                <a href="?<?= http_build_query(array_merge($qBase,['export'=>'locations'])) ?>"
+                   style="display:flex;align-items:center;gap:8px;padding:9px 16px;font-size:.78rem;color:#0f172a;text-decoration:none;white-space:nowrap" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+                   🚗 Export Locations</a>
+                <a href="?<?= http_build_query(array_merge($qBase,['export'=>'taxi'])) ?>"
+                   style="display:flex;align-items:center;gap:8px;padding:9px 16px;font-size:.78rem;color:#0f172a;text-decoration:none;white-space:nowrap" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+                   🚖 Export Taxi</a>
+                <a href="?<?= http_build_query(array_merge($qBase,['export'=>'charges'])) ?>"
+                   style="display:flex;align-items:center;gap:8px;padding:9px 16px;font-size:.78rem;color:#0f172a;text-decoration:none;white-space:nowrap" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+                   💸 Export Dépenses</a>
+                <a href="?<?= http_build_query(array_merge($qBase,['export'=>'vehicules'])) ?>"
+                   style="display:flex;align-items:center;gap:8px;padding:9px 16px;font-size:.78rem;color:#0f172a;text-decoration:none;white-space:nowrap" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+                   🚘 Export ROI véhicules</a>
+            </div>
+        </div>
         <button onclick="window.print()" class="btn btn-secondary btn-sm">🖨 Imprimer</button>
     </div>
 </div>
@@ -472,96 +512,82 @@ require_once BASE_PATH . '/includes/header.php';
     </div>
 </form>
 
-<!-- ── KPIs PRINCIPAUX ────────────────────────────────────────────────────── -->
+<!-- ── KPIs — 7 par ligne PC / 3 mobile ──────────────────────────────────── -->
 <div class="sec-title">💰 Vue d'ensemble — <?= date('d/m/Y',strtotime($filtreFrom)) ?> → <?= date('d/m/Y',strtotime($filtreTo)) ?></div>
-<div class="rnt-grid5">
+<div class="kpi-grid">
     <div class="kpi primary">
-        <span class="ki">💵</span>
-        <div class="kl">Recettes locations</div>
+        <div class="kl">Rec. locations</div>
         <div class="kv"><?= formatMoney($recLoc) ?></div>
-        <div class="ks">Paiements encaissés</div>
+        <div class="ks">Encaissé</div>
+    </div>
+    <div class="kpi teal">
+        <div class="kl">Rec. taxi</div>
+        <div class="kv"><?= formatMoney($recTaxi) ?></div>
+        <div class="ks">Chauffeurs</div>
     </div>
     <div class="kpi success">
-        <span class="ki">🚖</span>
-        <div class="kl">Recettes taxi</div>
-        <div class="kv"><?= formatMoney($recTaxi) ?></div>
-        <div class="ks">Versements chauffeurs</div>
+        <div class="kl">Total recettes</div>
+        <div class="kv"><?= formatMoney($totalRec) ?></div>
+        <div class="ks">Locations + Taxi</div>
     </div>
     <div class="kpi danger">
-        <span class="ki">📉</span>
         <div class="kl">Total dépenses</div>
         <div class="kv"><?= formatMoney($totalDep) ?></div>
-        <div class="ks">Véh. + Maint. + Entrep.</div>
+        <div class="ks">Charges + Maint.</div>
     </div>
-    <div class="kpi <?= $benefice >= 0 ? 'success' : 'danger' ?>">
-        <span class="ki">📊</span>
+    <div class="kpi <?= $benefice >= 0 ? 'success' : 'rose' ?>">
         <div class="kl">Bénéfice net</div>
         <div class="kv"><?= formatMoney($benefice) ?></div>
-        <div class="ks">Marge <?= $marge ?>% · ROI <?= $roi ?>%</div>
+        <div class="ks">Marge <?= $marge ?>%</div>
     </div>
-    <div class="kpi <?= $soldeCaisse >= 0 ? 'info' : 'danger' ?>">
-        <span class="ki">🏦</span>
+    <div class="kpi <?= $totalCapital > 0 ? ($roi >= 0 ? 'info' : 'danger') : 'slate' ?>">
+        <div class="kl">ROI global</div>
+        <div class="kv"><?= $roi ?>%</div>
+        <div class="ks"><?= formatMoney($totalCapital) ?></div>
+    </div>
+    <div class="kpi <?= $soldeCaisse >= 0 ? 'purple' : 'danger' ?>">
         <div class="kl">Solde caisse</div>
         <div class="kv"><?= formatMoney($soldeCaisse) ?></div>
         <div class="ks">Init. <?= formatMoney($soldeInitial) ?></div>
     </div>
 </div>
 
-<!-- KPIs secondaires -->
-<div class="rnt-grid4" style="margin-bottom:16px">
+<!-- KPIs alertes -->
+<div class="kpi-grid" style="margin-bottom:16px">
     <div class="kpi warning">
-        <span class="ki">⚠️</span>
-        <div class="kl">Créances clients</div>
-        <div class="kv text-danger"><?= formatMoney($totalCreances) ?></div>
-        <div class="ks"><?= count($creances) ?> locations impayées</div>
+        <div class="kl">Créances</div>
+        <div class="kv"><?= formatMoney($totalCreances) ?></div>
+        <div class="ks"><?= count($creances) ?> impayées</div>
     </div>
     <div class="kpi danger">
-        <span class="ki">🚗</span>
-        <div class="kl">Dettes taximantres</div>
-        <div class="kv text-danger"><?= formatMoney($totalDettes) ?></div>
-        <div class="ks"><?= count($dettesChauf) ?> chauffeurs en retard</div>
+        <div class="kl">Dettes taxi</div>
+        <div class="kv"><?= formatMoney($totalDettes) ?></div>
+        <div class="ks"><?= count($dettesChauf) ?> chauf.</div>
     </div>
-    <div class="kpi warning">
-        <span class="ki">🚔</span>
-        <div class="kl">Contraventions dues</div>
-        <div class="kv text-danger"><?= formatMoney($depContr) ?></div>
-        <div class="ks"><?= count($contraventions) ?> contraventions période</div>
+    <div class="kpi rose">
+        <div class="kl">Contrav.</div>
+        <div class="kv"><?= formatMoney($depContr) ?></div>
+        <div class="ks"><?= count($contraventions) ?> sur pér.</div>
     </div>
     <div class="kpi purple">
-        <span class="ki">🔧</span>
-        <div class="kl">Maintenances à venir</div>
+        <div class="kl">Maint. à venir</div>
         <div class="kv"><?= formatMoney($totalCoutMaint) ?></div>
-        <div class="ks"><?= count($maintPlanifiees) ?> planifiées</div>
+        <div class="ks"><?= count($maintPlanifiees) ?> plan.</div>
     </div>
-</div>
-
-<!-- ── GRAPHIQUE 12 MOIS ───────────────────────────────────────────────────── -->
-<div class="card" style="margin-bottom:14px">
-    <div class="card-header">
-        <span class="card-title">📈 Évolution 12 mois (Recettes vs Dépenses)</span>
+    <div class="kpi info">
+        <div class="kl">Véhicules</div>
+        <div class="kv"><?= $nbVehicules ?></div>
+        <div class="ks">Occ. 30j <?= $tauxOccGlobal ?>%</div>
     </div>
-    <div class="card-body" style="padding:14px">
-        <?php
-        $maxVal = max(1, max(array_merge($moisRecArr, $moisDepArr)));
-        ?>
-        <div class="chart-bar-wrap">
-            <?php foreach ($perfMensuelle as $i => $pm): ?>
-            <?php $hR = round(($pm['ca']/$maxVal)*130); $hD = round(($pm['ch']/$maxVal)*130); ?>
-            <div style="flex:1;display:flex;flex-direction:column;align-items:center">
-                <div style="display:flex;gap:2px;align-items:flex-end;height:130px">
-                    <div class="chart-bar" style="height:<?= max(2,$hR) ?>px;width:10px;background:#0d9488"
-                         title="Recettes: <?= formatMoney($pm['ca']) ?>"></div>
-                    <div class="chart-bar" style="height:<?= max(2,$hD) ?>px;width:10px;background:#dc2626"
-                         title="Dépenses: <?= formatMoney($pm['ch']) ?>"></div>
-                </div>
-                <div style="font-size:.5rem;color:#94a3b8;text-align:center;margin-top:3px"><?= $pm['mois'] ?></div>
-            </div>
-            <?php endforeach ?>
-        </div>
-        <div style="display:flex;gap:16px;margin-top:8px;font-size:.72rem;color:#64748b">
-            <span><span style="display:inline-block;width:10px;height:10px;background:#0d9488;border-radius:2px;margin-right:4px"></span>Recettes</span>
-            <span><span style="display:inline-block;width:10px;height:10px;background:#dc2626;border-radius:2px;margin-right:4px"></span>Dépenses</span>
-        </div>
+    <div class="kpi teal">
+        <div class="kl">Durée moy. loc.</div>
+        <div class="kv"><?= round($statLoc['duree_moy'] ?? 0, 1) ?> j</div>
+        <div class="ks"><?= (int)($statLoc['nb'] ?? 0) ?> locations</div>
+    </div>
+    <div class="kpi slate">
+        <div class="kl">Revenu/véhicule</div>
+        <div class="kv"><?= formatMoney($nbVehicules > 0 ? $totalRec / $nbVehicules : 0) ?></div>
+        <div class="ks">Période</div>
     </div>
 </div>
 
@@ -569,14 +595,83 @@ require_once BASE_PATH . '/includes/header.php';
 <div class="card">
     <div class="card-body" style="padding:14px 14px 0">
         <div class="tab-nav">
-            <button class="tab-btn active" onclick="switchTab('perf')">📅 Performance mensuelle</button>
-            <button class="tab-btn" onclick="switchTab('charges')">💸 Dépenses détail</button>
+            <button class="tab-btn active" onclick="switchTab('perf')">📅 Performance</button>
+            <button class="tab-btn" onclick="switchTab('locs')">🚗 Locations (<?= count($locDetail) ?>)</button>
+            <button class="tab-btn" onclick="switchTab('taxi')">🚖 Taxi (<?= count($taxiDetail) ?>)</button>
+            <button class="tab-btn" onclick="switchTab('charges')">💸 Dépenses</button>
             <button class="tab-btn" onclick="switchTab('creances')">📋 Créances & Dettes</button>
             <button class="tab-btn" onclick="switchTab('contrav')">🚔 Contraventions</button>
-            <button class="tab-btn" onclick="switchTab('veh')">🚗 Par véhicule (ROI)</button>
+            <button class="tab-btn" onclick="switchTab('veh')">📊 ROI véhicules</button>
             <button class="tab-btn" onclick="switchTab('clients')">👤 Top clients</button>
             <button class="tab-btn" onclick="switchTab('alertes')">🔔 Alertes</button>
         </div>
+    </div>
+
+    <!-- TAB: Locations détail -->
+    <div id="tab-locs" class="tab-panel" style="padding:0 14px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-size:.78rem;color:#64748b"><?= count($locDetail) ?> paiements — max 100 affichés</span>
+            <a href="?<?= http_build_query(array_merge($qBase,['export'=>'locations'])) ?>" class="btn btn-success btn-sm">⬇ Excel</a>
+        </div>
+        <?php if ($locDetail): ?>
+        <div class="table-responsive"><table class="tbl-compact">
+            <thead><tr>
+                <th>Date</th><th>Client</th><th>Téléphone</th><th>Véhicule</th><th>Immat.</th><th>Montant</th><th>Mode</th>
+            </tr></thead>
+            <tbody>
+            <?php foreach ($locDetail as $r): ?>
+            <tr>
+                <td data-label="Date"><?= formatDate($r['created_at']) ?></td>
+                <td data-label="Client"><?= sanitize($r['client']) ?></td>
+                <td data-label="Tél." style="color:#64748b"><?= sanitize($r['telephone']) ?></td>
+                <td data-label="Véhicule"><?= sanitize($r['veh']) ?></td>
+                <td data-label="Immat."><span style="color:#64748b"><?= sanitize($r['immat']) ?></span></td>
+                <td data-label="Montant" style="font-weight:700;color:#16a34a"><?= formatMoney($r['montant']) ?></td>
+                <td data-label="Mode"><?= sanitize($r['mode_paiement'] ?? '—') ?></td>
+            </tr>
+            <?php endforeach ?>
+            </tbody>
+            <tfoot><tr style="background:#f8fafc;font-weight:700">
+                <td colspan="5">TOTAL</td>
+                <td style="color:#16a34a"><?= formatMoney(array_sum(array_column($locDetail,'montant'))) ?></td>
+                <td></td>
+            </tr></tfoot>
+        </table></div>
+        <?php else: echo '<p style="color:#94a3b8;font-size:.78rem;padding:20px 0">Aucune recette location sur la période</p>'; endif ?>
+    </div>
+
+    <!-- TAB: Taxi détail -->
+    <div id="tab-taxi" class="tab-panel" style="padding:0 14px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <span style="font-size:.78rem;color:#64748b"><?= count($taxiDetail) ?> paiements — max 100 affichés</span>
+            <a href="?<?= http_build_query(array_merge($qBase,['export'=>'taxi'])) ?>" class="btn btn-success btn-sm">⬇ Excel</a>
+        </div>
+        <?php if ($taxiDetail): ?>
+        <div class="table-responsive"><table class="tbl-compact">
+            <thead><tr>
+                <th>Date</th><th>Chauffeur</th><th>Véhicule</th><th>Immat.</th><th>Montant</th><th>Mode</th><th>Statut</th><th>Notes</th>
+            </tr></thead>
+            <tbody>
+            <?php foreach ($taxiDetail as $r): ?>
+            <tr>
+                <td data-label="Date"><?= formatDate($r['date_paiement']) ?></td>
+                <td data-label="Chauffeur"><?= sanitize($r['chauffeur']) ?></td>
+                <td data-label="Véhicule"><?= sanitize($r['veh']) ?></td>
+                <td data-label="Immat." style="color:#64748b"><?= sanitize($r['immat']) ?></td>
+                <td data-label="Montant" style="font-weight:700;color:#16a34a"><?= formatMoney($r['montant']) ?></td>
+                <td data-label="Mode"><?= sanitize($r['mode_paiement'] ?? '—') ?></td>
+                <td data-label="Statut"><span class="badge-sm <?= $r['statut_jour']==='paye'?'green':($r['statut_jour']==='non_paye'?'red':'yellow') ?>"><?= $r['statut_jour'] ?></span></td>
+                <td data-label="Notes" style="color:#94a3b8;font-size:.7rem"><?= sanitize($r['notes'] ?? '—') ?></td>
+            </tr>
+            <?php endforeach ?>
+            </tbody>
+            <tfoot><tr style="background:#f8fafc;font-weight:700">
+                <td colspan="4">TOTAL</td>
+                <td style="color:#16a34a"><?= formatMoney(array_sum(array_column($taxiDetail,'montant'))) ?></td>
+                <td colspan="3"></td>
+            </tr></tfoot>
+        </table></div>
+        <?php else: echo '<p style="color:#94a3b8;font-size:.78rem;padding:20px 0">Aucune recette taxi sur la période</p>'; endif ?>
     </div>
 
     <!-- TAB: Performance mensuelle -->
@@ -857,213 +952,171 @@ require_once BASE_PATH . '/includes/header.php';
 
 <script>
 function switchTab(name) {
-    document.querySelectorAll('.tab-btn').forEach((b,i) => b.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
     event.currentTarget.classList.add('active');
     document.getElementById('tab-'+name).classList.add('active');
 }
+function toggleExpMenu() {
+    const m = document.getElementById('exp-menu');
+    m.style.display = m.style.display === 'none' ? 'block' : 'none';
+}
+document.addEventListener('click', function(e) {
+    if (!document.getElementById('exp-menu-wrap').contains(e.target)) {
+        document.getElementById('exp-menu').style.display = 'none';
+    }
+});
 </script>
 
 <?php require_once BASE_PATH . '/includes/footer.php'; ?>
 
 <?php
 // ══════════════════════════════════════════════════════════════════════════════
-// EXPORT EXCEL — 6 FEUILLES
+// EXPORT EXCEL — HTML XLS (pas de dépendance vendor)
 // ══════════════════════════════════════════════════════════════════════════════
-function exportExcel(PDO $db, int $tenantId, string $from, string $to, int $filtreVid): void {
-    $sp = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-    $sp->getProperties()->setTitle('FlotteCar — Rapport Financier')
-        ->setCreator('FlotteCar SaaS');
+function exportHtmlXls(PDO $db, int $tenantId, string $from, string $to, int $filtreVid, string $type): void {
+    $sp = null; // non utilisé
+    $fmtM = fn($v) => number_format((float)$v, 0, ',', ' ') . ' FCFA';
+    $fmtD = fn($v) => $v ? date('d/m/Y', strtotime($v)) : '—';
+    $tr = fn(array $cells) => '<tr>' . implode('', array_map(fn($c) => is_array($c) ? "<td class=\"{$c[1]}\">" . htmlspecialchars((string)$c[0]) . '</td>' : '<td>' . htmlspecialchars((string)$c) . '</td>', $cells)) . '</tr>';
+    $th = fn(array $heads) => '<tr>' . implode('', array_map(fn($h) => "<th>$h</th>", $heads)) . '</tr>';
 
-    $FILL_SOLID  = \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID;
-    $H_CENTER    = \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER;
-    $BORDER_THIN = \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN;
-    $headerStyle = [
-        'font'      => ['bold'=>true,'color'=>['rgb'=>'FFFFFF'],'size'=>10],
-        'fill'      => ['fillType'=>$FILL_SOLID,'startColor'=>['rgb'=>'1A56DB']],
-        'alignment' => ['horizontal'=>$H_CENTER],
-        'borders'   => ['allBorders'=>['borderStyle'=>$BORDER_THIN,'color'=>['rgb'=>'AAAAAA']]],
-    ];
-    $moneyFmt = '#,##0 "FCFA"';
-    $dateFmt  = 'DD/MM/YYYY';
+    // ── Recalcul données export ────────────────────────────────────────────────
+    $xq = fn($sql, $p) => (float)(($s=$db->prepare($sql))&&$s->execute($p) ? $s->fetchColumn() : 0);
+    $recLoc  = $xq("SELECT COALESCE(SUM(p.montant),0) FROM paiements p JOIN locations l ON l.id=p.location_id WHERE p.tenant_id=? AND p.created_at BETWEEN ? AND ?" . ($filtreVid?" AND l.vehicule_id=$filtreVid":''), [$tenantId,$from,$to]);
+    $recTaxi = $xq("SELECT COALESCE(SUM(pt.montant),0) FROM paiements_taxi pt JOIN taximetres tx ON tx.id=pt.taximetre_id WHERE pt.tenant_id=? AND pt.statut_jour='paye' AND pt.date_paiement BETWEEN ? AND ?" . ($filtreVid?" AND tx.vehicule_id=$filtreVid":''), [$tenantId,$from,$to]);
+    $depVeh  = $xq("SELECT COALESCE(SUM(montant),0) FROM charges WHERE tenant_id=? AND date_charge BETWEEN ? AND ?" . ($filtreVid?" AND vehicule_id=$filtreVid":''), [$tenantId,$from,$to]);
+    $depMnt  = $xq("SELECT COALESCE(SUM(cout),0) FROM maintenances WHERE tenant_id=? AND statut='termine' AND date_prevue BETWEEN ? AND ?" . ($filtreVid?" AND vehicule_id=$filtreVid":''), [$tenantId,$from,$to]);
+    $depCt   = 0; try { $depCt  = $xq("SELECT COALESCE(SUM(ct.montant),0) FROM contraventions_taxi ct JOIN taximetres tx ON tx.id=ct.taximetre_id WHERE ct.tenant_id=? AND ct.date_contr BETWEEN ? AND ?" . ($filtreVid?" AND tx.vehicule_id=$filtreVid":''), [$tenantId,$from,$to]); } catch (Throwable $e) {}
+    $depEnt  = 0; try { $depEnt = $xq("SELECT COALESCE(SUM(montant),0) FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ?", [$tenantId,$from,$to]); } catch (Throwable $e) {}
+    $totRec = $recLoc + $recTaxi;
+    $totDep = $depVeh + $depMnt + $depCt + $depEnt;
+    $benef  = $totRec - $totDep;
 
-    // ── Feuille 1 : Résumé ────────────────────────────────────────────────────
-    $ws1 = $sp->getActiveSheet()->setTitle('Résumé');
-    $ws1->setCellValue('A1', 'RAPPORT FINANCIER — FlotteCar');
-    $ws1->mergeCells('A1:D1');
-    $ws1->getStyle('A1')->getFont()->setBold(true)->setSize(14)->getColor()->setRGB('1A56DB');
-    $ws1->setCellValue('A2', "Période : $from → $to");
-    $ws1->mergeCells('A2:D2');
+    // ── Build HTML sheets ─────────────────────────────────────────────────────
+    $sheets = [];
 
-    $rows = [
-        ['Indicateur','Valeur','',''],
-        ['Recettes Locations', null, '', ''],
-        ['Recettes Taxi', null, '', ''],
-        ['Total Recettes', null, '', ''],
-        ['Charges Véhicules', null, '', ''],
-        ['Maintenances', null, '', ''],
-        ['Contraventions', null, '', ''],
-        ['Dépenses Entreprise', null, '', ''],
-        ['Total Dépenses', null, '', ''],
-        ['Bénéfice Net', null, '', ''],
-    ];
-
-    // Recalcul pour export
-    $recLoc = recQuery($db, "SELECT COALESCE(SUM(p.montant),0) FROM paiements p JOIN locations l ON l.id=p.location_id WHERE p.tenant_id=? AND p.created_at BETWEEN ? AND ?", [$tenantId,$from,$to]);
-    $recTaxi= recQuery($db, "SELECT COALESCE(SUM(pt.montant),0) FROM paiements_taxi pt JOIN taximetres tx ON tx.id=pt.taximetre_id WHERE pt.tenant_id=? AND pt.statut_jour='paye' AND pt.date_paiement BETWEEN ? AND ?", [$tenantId,$from,$to]);
-    $depVeh = recQuery($db, "SELECT COALESCE(SUM(montant),0) FROM charges WHERE tenant_id=? AND date_charge BETWEEN ? AND ?", [$tenantId,$from,$to]);
-    $depMnt = recQuery($db, "SELECT COALESCE(SUM(cout),0) FROM maintenances WHERE tenant_id=? AND statut='termine' AND date_prevue BETWEEN ? AND ?", [$tenantId,$from,$to]);
-    try { $depCt  = recQuery($db, "SELECT COALESCE(SUM(ct.montant),0) FROM contraventions_taxi ct JOIN taximetres tx ON tx.id=ct.taximetre_id WHERE ct.tenant_id=? AND ct.date_contr BETWEEN ? AND ?", [$tenantId,$from,$to]); } catch (Throwable $e) { $depCt = 0; }
-    try { $depEnt = recQuery($db, "SELECT COALESCE(SUM(montant),0) FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ?", [$tenantId,$from,$to]); } catch (Throwable $e) { $depEnt = 0; }
-    $totRec = $recLoc+$recTaxi;
-    $totDep = $depVeh+$depMnt+$depCt+$depEnt;
-
-    $data = [
-        ['Recettes Locations', $recLoc],['Recettes Taxi', $recTaxi],
-        ['Total Recettes', $totRec],['Charges Véhicules', $depVeh],
-        ['Maintenances', $depMnt],['Contraventions', $depCt],
-        ['Dépenses Entreprise', $depEnt],['Total Dépenses', $totDep],
-        ['Bénéfice Net', $totRec-$totDep],
-    ];
-    $ws1->setCellValue('A4','Indicateur'); $ws1->setCellValue('B4','Montant (FCFA)');
-    $ws1->getStyle('A4:B4')->applyFromArray($headerStyle);
-    foreach ($data as $i=>$d) {
-        $ws1->setCellValue('A'.($i+5), $d[0]);
-        $ws1->setCellValue('B'.($i+5), $d[1]);
-        $ws1->getStyle('B'.($i+5))->getNumberFormat()->setFormatCode($moneyFmt);
-    }
-    foreach (range('A','B') as $col) $ws1->getColumnDimension($col)->setAutoSize(true);
-
-    // Helper: écrire une ligne à partir d'un tableau de valeurs (col 1-based, row)
-    $writeRow = function(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $ws, int $row, array $vals) {
-        foreach ($vals as $i => $v) {
-            $ws->setCellValue([$i+1, $row], $v ?? '');
+    // Sheet: Résumé
+    if (in_array($type, ['global'])) {
+        $html  = '<p class="info">Période : ' . htmlspecialchars($from) . ' → ' . htmlspecialchars($to) . '</p>';
+        $html .= '<table><tr><th>Indicateur</th><th>Montant (FCFA)</th></tr>';
+        $rows = [
+            ['Recettes Locations', $fmtM($recLoc)],
+            ['Recettes Taxi', $fmtM($recTaxi)],
+            ['Total Recettes', $fmtM($totRec)],
+            ['Charges Véhicules', $fmtM($depVeh)],
+            ['Maintenances réalisées', $fmtM($depMnt)],
+            ['Contraventions', $fmtM($depCt)],
+            ['Dépenses Entreprise', $fmtM($depEnt)],
+            ['Total Dépenses', $fmtM($totDep)],
+            ['BÉNÉFICE NET', $fmtM($benef)],
+        ];
+        foreach ($rows as $r) {
+            $bold = in_array($r[0], ['Total Recettes','Total Dépenses','BÉNÉFICE NET']) ? ' class="tot"' : '';
+            $html .= "<tr$bold><td>" . htmlspecialchars($r[0]) . "</td><td class=\"num\">" . htmlspecialchars($r[1]) . "</td></tr>";
         }
-    };
-    // Helper: autosize colonnes A→lettre($n)
-    $autosize = function(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $ws, int $n) {
-        for ($c = 1; $c <= $n; $c++) {
-            $ws->getColumnDimension(
-                \PhpOffice\PhpSpreadsheet\Cell\Coordinate::stringFromColumnIndex($c)
-            )->setAutoSize(true);
+        $html .= '</table>';
+        $sheets['Résumé'] = $html;
+    }
+
+    // Sheet: Locations
+    if (in_array($type, ['global','locations'])) {
+        $sL = $db->prepare("SELECT p.id, p.created_at, CONCAT(c.nom,' ',c.prenom) client,
+            v.nom veh, v.immatriculation immat, p.montant, p.mode_paiement, p.reference
+            FROM paiements p JOIN locations l ON l.id=p.location_id
+            JOIN clients c ON c.id=l.client_id JOIN vehicules v ON v.id=l.vehicule_id
+            WHERE p.tenant_id=? AND p.created_at BETWEEN ? AND ?" . ($filtreVid?" AND l.vehicule_id=$filtreVid":'') . " ORDER BY p.created_at DESC");
+        $sL->execute([$tenantId,$from,$to]);
+        $rows = $sL->fetchAll(PDO::FETCH_ASSOC);
+        $html = '<table border="1" style="border-collapse:collapse">';
+        $html .= "<tr><th style=\"$hs\">ID</th><th style=\"$hs\">Date</th><th style=\"$hs\">Client</th><th style=\"$hs\">Véhicule</th><th style=\"$hs\">Immatriculation</th><th style=\"$hs\">Montant</th><th style=\"$hs\">Mode</th><th style=\"$hs\">Référence</th></tr>";
+        foreach ($rows as $r) {
+            $html .= "<tr><td style=\"$ms\">{$r['id']}</td><td style=\"$ms\">{$fmtD($r['created_at'])}</td><td style=\"$ms\">".htmlspecialchars($r['client'])."</td><td style=\"$ms\">".htmlspecialchars($r['veh'])."</td><td style=\"$ms\">".htmlspecialchars($r['immat'])."</td><td style=\"$ns\">{$fmtM($r['montant'])}</td><td style=\"$ms\">".htmlspecialchars($r['mode_paiement'])."</td><td style=\"$ms\">".htmlspecialchars($r['reference']??'')."</td></tr>";
         }
-    };
-
-    // ── Feuille 2 : Recettes Locations ───────────────────────────────────────
-    $ws2 = $sp->createSheet()->setTitle('Recettes Locations');
-    $writeRow($ws2, 1, ['ID','Date','Client','Véhicule','Montant','Mode','Référence']);
-    $ws2->getStyle('A1:G1')->applyFromArray($headerStyle);
-    $sL = $db->prepare("SELECT p.id, p.created_at, CONCAT(c.nom,' ',c.prenom) client, v.nom veh,
-        p.montant, p.mode_paiement, p.reference
-        FROM paiements p JOIN locations l ON l.id=p.location_id
-        JOIN clients c ON c.id=l.client_id JOIN vehicules v ON v.id=l.vehicule_id
-        WHERE p.tenant_id=? AND p.created_at BETWEEN ? AND ?
-        ORDER BY p.created_at DESC");
-    $sL->execute([$tenantId,$from,$to]);
-    $row=2;
-    foreach ($sL->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $writeRow($ws2, $row, [$r['id'], date('d/m/Y',strtotime($r['created_at'])), $r['client'], $r['veh'], (float)$r['montant'], $r['mode_paiement'], $r['reference']]);
-        $ws2->getStyle('E'.$row)->getNumberFormat()->setFormatCode($moneyFmt);
-        $row++;
+        $html .= '</table>';
+        $sheets['Recettes Locations'] = $html;
     }
-    $autosize($ws2, 7);
 
-    // ── Feuille 3 : Recettes Taxi ────────────────────────────────────────────
-    $ws3 = $sp->createSheet()->setTitle('Recettes Taxi');
-    $writeRow($ws3, 1, ['Date','Chauffeur','Véhicule','Montant','Mode','Statut','Notes']);
-    $ws3->getStyle('A1:G1')->applyFromArray($headerStyle);
-    $sT = $db->prepare("SELECT pt.date_paiement, CONCAT(tx.nom,' ',tx.prenom) chauffeur,
-        v.nom veh, pt.montant, pt.mode_paiement, pt.statut_jour, pt.notes
-        FROM paiements_taxi pt JOIN taximetres tx ON tx.id=pt.taximetre_id
-        JOIN vehicules v ON v.id=tx.vehicule_id
-        WHERE pt.tenant_id=? AND pt.date_paiement BETWEEN ? AND ?
-        ORDER BY pt.date_paiement DESC");
-    $sT->execute([$tenantId,$from,$to]);
-    $row=2;
-    foreach ($sT->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $writeRow($ws3, $row, [date('d/m/Y',strtotime($r['date_paiement'])), $r['chauffeur'], $r['veh'], (float)$r['montant'], $r['mode_paiement'], $r['statut_jour'], $r['notes']]);
-        $ws3->getStyle('D'.$row)->getNumberFormat()->setFormatCode($moneyFmt);
-        $row++;
-    }
-    $autosize($ws3, 7);
-
-    // ── Feuille 4 : Dépenses ─────────────────────────────────────────────────
-    $ws4 = $sp->createSheet()->setTitle('Dépenses');
-    $writeRow($ws4, 1, ['Date','Type','Libellé','Véhicule','Montant','Notes']);
-    $ws4->getStyle('A1:F1')->applyFromArray($headerStyle);
-    $sDep = $db->prepare("SELECT c.date_charge, c.type, c.libelle, v.nom veh, c.montant, c.notes
-        FROM charges c JOIN vehicules v ON v.id=c.vehicule_id
-        WHERE c.tenant_id=? AND c.date_charge BETWEEN ? AND ?
-        ORDER BY c.date_charge DESC");
-    $sDep->execute([$tenantId,$from,$to]);
-    $row=2;
-    foreach ($sDep->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $writeRow($ws4, $row, [date('d/m/Y',strtotime($r['date_charge'])), $r['type'], $r['libelle'], $r['veh'], (float)$r['montant'], $r['notes']]);
-        $ws4->getStyle('E'.$row)->getNumberFormat()->setFormatCode($moneyFmt);
-        $row++;
-    }
-    try {
-        $sDE2 = $db->prepare("SELECT date_depense, categorie, libelle, montant, notes FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ?");
-        $sDE2->execute([$tenantId,$from,$to]);
-        foreach ($sDE2->fetchAll(PDO::FETCH_ASSOC) as $r) {
-            $writeRow($ws4, $row, [date('d/m/Y',strtotime($r['date_depense'])), 'entreprise/'.$r['categorie'], $r['libelle'], 'Entreprise', (float)$r['montant'], $r['notes']]);
-            $ws4->getStyle('E'.$row)->getNumberFormat()->setFormatCode($moneyFmt);
-            $row++;
+    // Sheet: Taxi
+    if (in_array($type, ['global','taxi'])) {
+        $sT = $db->prepare("SELECT pt.date_paiement, CONCAT(tx.nom,' ',tx.prenom) chauffeur,
+            v.nom veh, v.immatriculation immat, pt.montant, pt.mode_paiement, pt.statut_jour, pt.notes
+            FROM paiements_taxi pt JOIN taximetres tx ON tx.id=pt.taximetre_id
+            JOIN vehicules v ON v.id=tx.vehicule_id
+            WHERE pt.tenant_id=? AND pt.date_paiement BETWEEN ? AND ?" . ($filtreVid?" AND tx.vehicule_id=$filtreVid":'') . " ORDER BY pt.date_paiement DESC");
+        $sT->execute([$tenantId,$from,$to]);
+        $rows = $sT->fetchAll(PDO::FETCH_ASSOC);
+        $html = '<table border="1" style="border-collapse:collapse">';
+        $html .= "<tr><th style=\"$hs\">Date</th><th style=\"$hs\">Chauffeur</th><th style=\"$hs\">Véhicule</th><th style=\"$hs\">Immatriculation</th><th style=\"$hs\">Montant</th><th style=\"$hs\">Mode</th><th style=\"$hs\">Statut</th><th style=\"$hs\">Notes</th></tr>";
+        foreach ($rows as $r) {
+            $html .= "<tr><td style=\"$ms\">{$fmtD($r['date_paiement'])}</td><td style=\"$ms\">".htmlspecialchars($r['chauffeur'])."</td><td style=\"$ms\">".htmlspecialchars($r['veh'])."</td><td style=\"$ms\">".htmlspecialchars($r['immat'])."</td><td style=\"$ns\">{$fmtM($r['montant'])}</td><td style=\"$ms\">".htmlspecialchars($r['mode_paiement']??'')."</td><td style=\"$ms\">".htmlspecialchars($r['statut_jour'])."</td><td style=\"$ms\">".htmlspecialchars($r['notes']??'')."</td></tr>";
         }
-    } catch (Throwable $e) {}
-    $autosize($ws4, 6);
-
-    // ── Feuille 5 : Contraventions ────────────────────────────────────────────
-    $ws5 = $sp->createSheet()->setTitle('Contraventions');
-    $writeRow($ws5, 1, ['Date','Chauffeur','Véhicule','Montant','Description','Statut']);
-    $ws5->getStyle('A1:F1')->applyFromArray($headerStyle);
-    try {
-    $sCv = $db->prepare("SELECT ct.date_contr, CONCAT(tx.nom,' ',tx.prenom) chauffeur,
-        v.nom veh, ct.montant, ct.description, ct.statut
-        FROM contraventions_taxi ct JOIN taximetres tx ON tx.id=ct.taximetre_id
-        JOIN vehicules v ON v.id=tx.vehicule_id
-        WHERE ct.tenant_id=? AND ct.date_contr BETWEEN ? AND ?");
-    $sCv->execute([$tenantId,$from,$to]);
-    $row=2;
-    foreach ($sCv->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $writeRow($ws5, $row, [date('d/m/Y',strtotime($r['date_contr'])), $r['chauffeur'], $r['veh'], (float)$r['montant'], $r['description'], $r['statut']]);
-        $ws5->getStyle('D'.$row)->getNumberFormat()->setFormatCode($moneyFmt);
-        $row++;
+        $html .= '</table>';
+        $sheets['Recettes Taxi'] = $html;
     }
-    } catch (Throwable $e) { /* table contraventions_taxi peut ne pas exister */ }
-    $autosize($ws5, 6);
 
-    // ── Feuille 6 : Par véhicule (ROI) ───────────────────────────────────────
-    $ws6 = $sp->createSheet()->setTitle('ROI par véhicule');
-    $writeRow($ws6, 1, ['Véhicule','Immatriculation','Type','Capital','Recettes','Dépenses','Bénéfice','ROI %']);
-    $ws6->getStyle('A1:H1')->applyFromArray($headerStyle);
-    $sROI = $db->prepare("SELECT v.nom, v.immatriculation, v.type_vehicule, v.capital_investi,
-        COALESCE((SELECT SUM(p2.montant) FROM paiements p2 JOIN locations l2 ON l2.id=p2.location_id WHERE l2.vehicule_id=v.id AND p2.tenant_id=v.tenant_id),0)
-        + COALESCE((SELECT SUM(pt2.montant) FROM paiements_taxi pt2 JOIN taximetres tx2 ON tx2.id=pt2.taximetre_id WHERE tx2.vehicule_id=v.id AND pt2.statut_jour='paye' AND pt2.tenant_id=v.tenant_id),0) revenus,
-        COALESCE((SELECT SUM(c2.montant) FROM charges c2 WHERE c2.vehicule_id=v.id AND c2.tenant_id=v.tenant_id),0) charges
-        FROM vehicules v WHERE v.tenant_id=? ORDER BY v.nom");
-    $sROI->execute([$tenantId]);
-    $row=2;
-    foreach ($sROI->fetchAll(PDO::FETCH_ASSOC) as $r) {
-        $benef = $r['revenus'] - $r['charges'];
-        $roi   = $r['capital_investi']>0 ? round($benef/$r['capital_investi']*100,1) : 0;
-        $writeRow($ws6, $row, [$r['nom'], $r['immatriculation'], $r['type_vehicule'], (float)$r['capital_investi'], (float)$r['revenus'], (float)$r['charges'], $benef, $roi]);
-        foreach (['D','E','F','G'] as $col)
-            $ws6->getStyle($col.$row)->getNumberFormat()->setFormatCode($moneyFmt);
-        $ws6->getStyle('H'.$row)->getNumberFormat()->setFormatCode('0.0"%"');
-        $row++;
+    // Sheet: Dépenses
+    if (in_array($type, ['global','charges'])) {
+        $sDep = $db->prepare("SELECT c.date_charge, c.type, c.libelle, v.nom veh, v.immatriculation immat, c.montant, c.notes
+            FROM charges c JOIN vehicules v ON v.id=c.vehicule_id
+            WHERE c.tenant_id=? AND c.date_charge BETWEEN ? AND ?" . ($filtreVid?" AND c.vehicule_id=$filtreVid":'') . " ORDER BY c.date_charge DESC");
+        $sDep->execute([$tenantId,$from,$to]);
+        $depRows = $sDep->fetchAll(PDO::FETCH_ASSOC);
+        try {
+            $sDE2 = $db->prepare("SELECT date_depense date_charge, categorie type, libelle, 'Entreprise' veh, '' immat, montant, notes FROM depenses_entreprise WHERE tenant_id=? AND date_depense BETWEEN ? AND ? ORDER BY date_depense DESC");
+            $sDE2->execute([$tenantId,$from,$to]);
+            $depRows = array_merge($depRows, $sDE2->fetchAll(PDO::FETCH_ASSOC));
+        } catch (Throwable $e) {}
+        $html = '<table border="1" style="border-collapse:collapse">';
+        $html .= "<tr><th style=\"$hs\">Date</th><th style=\"$hs\">Type</th><th style=\"$hs\">Libellé</th><th style=\"$hs\">Véhicule</th><th style=\"$hs\">Immatriculation</th><th style=\"$hs\">Montant</th><th style=\"$hs\">Notes</th></tr>";
+        foreach ($depRows as $r) {
+            $html .= "<tr><td style=\"$ms\">{$fmtD($r['date_charge'])}</td><td style=\"$ms\">".htmlspecialchars($r['type'])."</td><td style=\"$ms\">".htmlspecialchars($r['libelle']??'')."</td><td style=\"$ms\">".htmlspecialchars($r['veh'])."</td><td style=\"$ms\">".htmlspecialchars($r['immat'])."</td><td style=\"$ns\">{$fmtM($r['montant'])}</td><td style=\"$ms\">".htmlspecialchars($r['notes']??'')."</td></tr>";
+        }
+        $html .= '</table>';
+        $sheets['Dépenses'] = $html;
     }
-    $autosize($ws6, 8);
 
-    // ── Output ────────────────────────────────────────────────────────────────
-    $sp->setActiveSheetIndex(0);
-    $fname = 'FlotteCar_Rapport_'.date('Y-m-d').'.xlsx';
-    header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    header('Content-Disposition: attachment; filename="'.$fname.'"');
-    header('Cache-Control: max-age=0');
-    (new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($sp))->save('php://output');
-}
+    // Sheet: ROI par véhicule
+    if (in_array($type, ['global','vehicules'])) {
+        $sROI = $db->prepare("SELECT v.nom, v.immatriculation, v.type_vehicule, v.capital_investi,
+            COALESCE((SELECT SUM(p2.montant) FROM paiements p2 JOIN locations l2 ON l2.id=p2.location_id WHERE l2.vehicule_id=v.id AND p2.tenant_id=v.tenant_id),0)
+            + COALESCE((SELECT SUM(pt2.montant) FROM paiements_taxi pt2 JOIN taximetres tx2 ON tx2.id=pt2.taximetre_id WHERE tx2.vehicule_id=v.id AND pt2.statut_jour='paye' AND pt2.tenant_id=v.tenant_id),0) revenus,
+            COALESCE((SELECT SUM(c2.montant) FROM charges c2 WHERE c2.vehicule_id=v.id AND c2.tenant_id=v.tenant_id),0) charges_tot
+            FROM vehicules v WHERE v.tenant_id=?" . ($filtreVid?" AND v.id=$filtreVid":'') . " ORDER BY v.nom");
+        $sROI->execute([$tenantId]);
+        $roiRows = $sROI->fetchAll(PDO::FETCH_ASSOC);
+        $html = '<table border="1" style="border-collapse:collapse">';
+        $html .= "<tr><th style=\"$hs\">Véhicule</th><th style=\"$hs\">Immatriculation</th><th style=\"$hs\">Type</th><th style=\"$hs\">Capital investi</th><th style=\"$hs\">Recettes totales</th><th style=\"$hs\">Dépenses totales</th><th style=\"$hs\">Bénéfice net</th><th style=\"$hs\">ROI %</th></tr>";
+        foreach ($roiRows as $r) {
+            $b = $r['revenus'] - $r['charges_tot'];
+            $roi = $r['capital_investi'] > 0 ? round($b / $r['capital_investi'] * 100, 1) : 0;
+            $html .= "<tr><td style=\"$ms\">".htmlspecialchars($r['nom'])."</td><td style=\"$ms\">".htmlspecialchars($r['immatriculation'])."</td><td style=\"$ms\">".htmlspecialchars($r['type_vehicule'])."</td><td style=\"$ns\">{$fmtM($r['capital_investi'])}</td><td style=\"$ns\">{$fmtM($r['revenus'])}</td><td style=\"$ns\">{$fmtM($r['charges_tot'])}</td><td style=\"$ns\">{$fmtM($b)}</td><td style=\"$ns\">{$roi}%</td></tr>";
+        }
+        $html .= '</table>';
+        $sheets['ROI Véhicules'] = $html;
+    }
 
-function recQuery(PDO $db, string $sql, array $p): float {
-    $s = $db->prepare($sql); $s->execute($p); return (float)$s->fetchColumn();
+    // ── Output — un seul tableau HTML par export (compatible Excel/LibreOffice) ──
+    $fname = 'FlotteCar_' . ucfirst($type) . '_' . date('Y-m-d') . '.xls';
+    header('Content-Type: application/vnd.ms-excel; charset=utf-8');
+    header('Content-Disposition: attachment; filename="' . $fname . '"');
+    header('Cache-Control: no-cache, must-revalidate');
+    header('Pragma: no-cache');
+    echo "\xEF\xBB\xBF"; // BOM UTF-8
+    echo '<html><head><meta charset="UTF-8"><style>
+        body{font-family:Arial,sans-serif;font-size:11px}
+        table{border-collapse:collapse;width:100%}
+        th{background:#1a56db;color:#fff;font-weight:bold;padding:6px 8px;border:1px solid #aaa;text-align:left}
+        td{padding:5px 8px;border:1px solid #ddd}
+        .num{text-align:right}
+        .tot{font-weight:bold;background:#f1f5f9}
+        h2{color:#1a56db;font-size:14px;margin:16px 0 4px}
+        .info{color:#475569;font-size:11px;margin-bottom:12px}
+    </style></head><body>';
+    foreach ($sheets as $name => $html) {
+        echo '<h2>' . htmlspecialchars($name) . '</h2>';
+        echo $html;
+        echo '<br>';
+    }
+    echo '</body></html>';
 }

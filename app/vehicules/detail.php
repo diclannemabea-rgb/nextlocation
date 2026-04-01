@@ -69,30 +69,224 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// ─── EXPORT CSV ───────────────────────────────────────────────────────────────
+// ─── EXPORT EXCEL ─────────────────────────────────────────────────────────────
+if (($_GET['action'] ?? '') === 'export_excel') {
+    $exFrom = $_GET['ed'] ?? '';
+    $exTo   = $_GET['ef'] ?? '';
+    $nomVeh = trim($vehicule['nom'] . ' — ' . $vehicule['immatriculation']);
+    $periodeTxt = ($exFrom && $exTo) ? date('d/m/Y', strtotime($exFrom)) . ' au ' . date('d/m/Y', strtotime($exTo)) : 'Depuis le début';
+
+    $dateFilter  = ''; $dateParams  = [];
+    $dateFilterC = ''; $dateParamsC = [];
+    if ($exFrom) { $dateFilter  .= " AND date_paiement >= ?"; $dateFilterC .= " AND date_charge >= ?"; $dateParams[] = $exFrom; $dateParamsC[] = $exFrom; }
+    if ($exTo)   { $dateFilter  .= " AND date_paiement <= ?"; $dateFilterC .= " AND date_charge <= ?"; $dateParams[] = $exTo;   $dateParamsC[] = $exTo; }
+
+    // Paiements taxi
+    $sPt = $db->prepare("SELECT pt.*, tx.nom tnom, tx.prenom tprenom, tx.tarif_journalier
+        FROM paiements_taxi pt JOIN taximetres tx ON tx.id=pt.taximetre_id
+        WHERE tx.vehicule_id=? AND pt.tenant_id=? AND pt.statut_jour!='cotisation_fonds' $dateFilter ORDER BY pt.date_paiement ASC");
+    $sPt->execute(array_merge([$vehiculeId, $tenantId], $dateParams));
+    $exTaxi = $sPt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Locations (paiements)
+    $dateFilterL = ''; $dateParamsL = [$vehiculeId, $tenantId];
+    if ($exFrom) { $dateFilterL .= " AND DATE(p.created_at) >= ?"; $dateParamsL[] = $exFrom; }
+    if ($exTo)   { $dateFilterL .= " AND DATE(p.created_at) <= ?"; $dateParamsL[] = $exTo; }
+    $sLoc = $db->prepare("SELECT p.created_at, l.date_debut, l.date_fin, l.nombre_jours, p.montant, p.mode_paiement,
+        COALESCE(c.nom,'') cnom, COALESCE(c.prenom,'') cprenom, l.statut_paiement
+        FROM paiements p JOIN locations l ON l.id=p.location_id LEFT JOIN clients c ON c.id=l.client_id
+        WHERE l.vehicule_id=? AND p.tenant_id=? $dateFilterL ORDER BY p.created_at ASC");
+    $sLoc->execute($dateParamsL);
+    $exLocs = $sLoc->fetchAll(PDO::FETCH_ASSOC);
+
+    // Charges
+    $sCh = $db->prepare("SELECT * FROM charges WHERE vehicule_id=? AND tenant_id=? $dateFilterC ORDER BY date_charge ASC");
+    $sCh->execute(array_merge([$vehiculeId, $tenantId], $dateParamsC));
+    $exCharges = $sCh->fetchAll(PDO::FETCH_ASSOC);
+
+    // Calculs résumé
+    $xTotTaxi = 0; $xJTrav = 0; $xJPaye = 0; $xJOff = 0;
+    foreach ($exTaxi as $pt) {
+        if (in_array($pt['statut_jour'], ['paye','non_paye'])) { $xJTrav++; }
+        if ($pt['statut_jour'] === 'paye') { $xJPaye++; $xTotTaxi += (float)$pt['montant']; }
+        if (in_array($pt['statut_jour'], ['jour_off','panne','accident','maladie'])) $xJOff++;
+    }
+    $xTotLoc  = array_sum(array_column($exLocs, 'montant'));
+    $xTotCh   = array_sum(array_column($exCharges, 'montant'));
+    $xCapital = (float)($vehicule['capital_investi'] ?? 0);
+
+    // Recettes initiales + dépenses initiales (toujours incluses quel que soit le filtre)
+    $xRecInit = (float)($vehicule['recettes_initiales'] ?? 0);
+    $xDepInit = (float)($vehicule['depenses_initiales'] ?? 0);
+
+    // Total recettes = recettes période + recettes initiales
+    $xTotRec = $xTotTaxi + $xTotLoc + $xRecInit;
+    // Total dépenses = charges période + dépenses initiales
+    $xTotDep = $xTotCh + $xDepInit;
+
+    // Bénéfice net = recettes totales - dépenses totales
+    $xBen = $xTotRec - $xTotDep;
+    // ROI = (bénéfice net / capital investi) × 100
+    $xRoi = $xCapital > 0 ? round($xBen / $xCapital * 100, 1) : 0;
+
+    // Jours d'exploitation (jours saisis en paye/non_paye depuis la création)
+    $sJoursExpl = $db->prepare("
+        SELECT MIN(pt.date_paiement) premier_jour, MAX(pt.date_paiement) dernier_jour,
+               COUNT(DISTINCT pt.date_paiement) nb_jours_saisis
+        FROM paiements_taxi pt JOIN taximetres tx ON tx.id=pt.taximetre_id
+        WHERE tx.vehicule_id=? AND pt.tenant_id=? AND pt.statut_jour IN('paye','non_paye')");
+    $sJoursExpl->execute([$vehiculeId, $tenantId]);
+    $joursExpl = $sJoursExpl->fetch(PDO::FETCH_ASSOC);
+    // Jours depuis la date de création du véhicule
+    $dateCreation = $vehicule['created_at'] ? date('Y-m-d', strtotime($vehicule['created_at'])) : null;
+    $nbJoursDepuisCreation = $dateCreation ? (int)((strtotime(date('Y-m-d')) - strtotime($dateCreation)) / 86400) + 1 : 0;
+
+    $libSt = ['paye'=>'Payé','non_paye'=>'Non payé','jour_off'=>'Jour off','panne'=>'Panne','accident'=>'Accident','maladie'=>'Maladie'];
+
+    header('Content-Type: application/vnd.ms-excel; charset=utf-8');
+    header('Content-Disposition: attachment; filename="vehicule_' . preg_replace('/[^a-zA-Z0-9_-]/','_',$vehicule['immatriculation']) . '_' . date('Y-m-d') . '.xls"');
+    echo '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">';
+    echo '<head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>';
+    echo '<x:ExcelWorksheet><x:Name>Resume</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet>';
+    echo '<x:ExcelWorksheet><x:Name>Mouvements</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet>';
+    echo '</x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>';
+
+    // ══ FEUILLE 1 : RÉSUMÉ ══
+    $benBg = $xBen >= 0 ? 'background:#dcfce7;color:#166534' : 'background:#fee2e2;color:#dc2626';
+    echo '<div id="Resume"><table border="1" cellpadding="6" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:11px;min-width:500px">';
+
+    // En-tête
+    echo '<tr><td colspan="4" style="background:#0d9488;color:#fff;font-size:16px;font-weight:bold;padding:14px">FICHE VÉHICULE — '.htmlspecialchars($nomVeh).'</td></tr>';
+    echo '<tr><td colspan="4" style="background:#f0fdfa;color:#0d9488;font-size:10px;padding:6px">Période : '.$periodeTxt.' — Exporté le '.date('d/m/Y H:i').'</td></tr>';
+
+    // Infos véhicule
+    echo '<tr><td colspan="4" style="background:#e2e8f0;font-weight:bold;padding:6px 8px;font-size:11px;color:#334155">INFORMATIONS VÉHICULE</td></tr>';
+    echo '<tr><td style="background:#f8fafc;font-weight:bold;width:180px">Immatriculation</td><td style="font-weight:bold;color:#0d9488">'.htmlspecialchars($vehicule['immatriculation']).'</td><td style="background:#f8fafc;font-weight:bold">Type</td><td>'.htmlspecialchars(ucfirst($vehicule['type_vehicule']??'')).'</td></tr>';
+    echo '<tr><td style="background:#f8fafc;font-weight:bold">Marque / Modèle</td><td>'.htmlspecialchars(trim(($vehicule['marque']??'').' '.($vehicule['modele']??''))).'</td><td style="background:#f8fafc;font-weight:bold">Année</td><td>'.htmlspecialchars($vehicule['annee']??'—').'</td></tr>';
+    echo '<tr><td style="background:#f8fafc;font-weight:bold">Km actuel</td><td>'.number_format((int)$vehicule['kilometrage_actuel'],0,',',' ').' km</td><td style="background:#f8fafc;font-weight:bold">Mise en service</td><td>'.($dateCreation ? date('d/m/Y', strtotime($dateCreation)) : '—').'</td></tr>';
+    echo '<tr><td style="background:#f8fafc;font-weight:bold">Capital investi</td><td style="font-weight:bold;color:#0d9488">'.number_format($xCapital,0,',',' ').' FCFA</td><td style="background:#f8fafc;font-weight:bold">Jours depuis mise en service</td><td style="font-weight:bold">'.$nbJoursDepuisCreation.' jours</td></tr>';
+    echo '<tr><td colspan="4" style="height:6px"></td></tr>';
+
+    // Résumé financier
+    echo '<tr><td colspan="4" style="background:#1e40af;color:#fff;font-weight:bold;padding:8px;font-size:12px">RÉSUMÉ FINANCIER CUMULÉ — '.$periodeTxt.'</td></tr>';
+
+    // Recettes
+    echo '<tr><td colspan="4" style="background:#f0fdf4;font-weight:bold;padding:5px 8px;font-size:10px;color:#166534">— RECETTES —</td></tr>';
+    if ($xRecInit > 0)
+        echo '<tr><td style="background:#f8fafc;font-weight:bold">Recettes initiales</td><td style="color:#10b981">'.number_format($xRecInit,0,',',' ').' FCFA</td><td colspan="2" style="color:#64748b;font-size:.9em">Saisies à la création du véhicule</td></tr>';
+    if ($vehicule['type_vehicule'] === 'taxi')
+        echo '<tr><td style="background:#f8fafc;font-weight:bold">Recettes taxi (versements)</td><td style="color:#10b981">'.number_format($xTotTaxi,0,',',' ').' FCFA</td><td style="background:#f8fafc;font-weight:bold">Jours payés / travaillés</td><td>'.$xJPaye.' / '.$xJTrav.'</td></tr>';
+    if ($xTotLoc > 0)
+        echo '<tr><td style="background:#f8fafc;font-weight:bold">Recettes locations</td><td style="color:#10b981">'.number_format($xTotLoc,0,',',' ').' FCFA</td><td colspan="2"></td></tr>';
+    echo '<tr><td style="background:#dcfce7;font-weight:bold;font-size:12px">TOTAL RECETTES</td><td style="background:#dcfce7;color:#059669;font-weight:bold;font-size:14px">'.number_format($xTotRec,0,',',' ').' FCFA</td><td colspan="2" style="background:#dcfce7"></td></tr>';
+
+    echo '<tr><td colspan="4" style="height:4px"></td></tr>';
+
+    // Dépenses
+    echo '<tr><td colspan="4" style="background:#fff5f5;font-weight:bold;padding:5px 8px;font-size:10px;color:#991b1b">— DÉPENSES —</td></tr>';
+    if ($xDepInit > 0)
+        echo '<tr><td style="background:#f8fafc;font-weight:bold">Dépenses initiales</td><td style="color:#dc2626">'.number_format($xDepInit,0,',',' ').' FCFA</td><td colspan="2" style="color:#64748b;font-size:.9em">Saisies à la création du véhicule</td></tr>';
+    echo '<tr><td style="background:#f8fafc;font-weight:bold">Charges & entretiens</td><td style="color:#dc2626">'.number_format($xTotCh,0,',',' ').' FCFA</td><td colspan="2"></td></tr>';
+    echo '<tr><td style="background:#fee2e2;font-weight:bold;font-size:12px">TOTAL DÉPENSES</td><td style="background:#fee2e2;color:#dc2626;font-weight:bold;font-size:14px">'.number_format($xTotDep,0,',',' ').' FCFA</td><td colspan="2" style="background:#fee2e2"></td></tr>';
+
+    echo '<tr><td colspan="4" style="height:6px"></td></tr>';
+
+    // Bilan final
+    echo '<tr><td colspan="4" style="background:#0f172a;color:#fff;font-weight:bold;padding:8px;font-size:12px">BILAN FINAL</td></tr>';
+    echo '<tr><td colspan="2" style="'.$benBg.';font-weight:bold;font-size:13px;padding:10px">BÉNÉFICE NET</td><td colspan="2" style="'.$benBg.';font-weight:bold;font-size:16px;padding:10px">'.number_format($xBen,0,',',' ').' FCFA</td></tr>';
+    $roiBg = $xRoi >= 0 ? 'background:#eff6ff;color:#1e40af' : 'background:#fff5f5;color:#dc2626';
+    echo '<tr><td style="'.$roiBg.';font-weight:bold">ROI (retour sur investissement)</td><td style="'.$roiBg.';font-weight:bold;font-size:14px">'.$xRoi.'%</td>';
+    echo '<td style="background:#f8fafc;font-weight:bold">Capital investi</td><td style="font-weight:bold">'.number_format($xCapital,0,',',' ').' FCFA</td></tr>';
+    if ($vehicule['type_vehicule'] === 'taxi' && !empty($joursExpl['premier_jour'])) {
+        echo '<tr><td style="background:#f8fafc;font-weight:bold">Jours d\'exploitation saisis</td><td style="font-weight:bold">'.(int)$joursExpl['nb_jours_saisis'].' jours</td>';
+        echo '<td style="background:#f8fafc;font-weight:bold">Période exploitation</td><td style="font-size:.9em">'.date('d/m/Y',strtotime($joursExpl['premier_jour'])).' → '.date('d/m/Y',strtotime($joursExpl['dernier_jour'])).'</td></tr>';
+    }
+    echo '<tr><td style="background:#f8fafc;font-weight:bold">Total jours depuis création</td><td style="font-weight:bold">'.$nbJoursDepuisCreation.' jours</td><td colspan="2" style="color:#64748b;font-size:.9em">Depuis le '.($dateCreation ? date('d/m/Y',strtotime($dateCreation)) : '—').'</td></tr>';
+    echo '</table></div>';
+
+    // ══ FEUILLE 2 : MOUVEMENTS ══
+    echo '<div id="Mouvements"><table border="1" cellpadding="5" style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:10px">';
+    echo '<tr><td colspan="7" style="background:#1e40af;color:#fff;font-size:14px;font-weight:bold;padding:12px">MOUVEMENTS — '.htmlspecialchars($nomVeh).'</td></tr>';
+    echo '<tr><td colspan="7" style="background:#eff6ff;color:#1e40af;font-size:10px;padding:5px">Période : '.$periodeTxt.'</td></tr>';
+
+    // Paiements taxi
+    if (!empty($exTaxi)) {
+        echo '<tr><td colspan="7" style="background:#dcfce7;font-weight:bold;padding:8px;font-size:11px;color:#166534">PAIEMENTS TAXI ('.count($exTaxi).' entrées)</td></tr>';
+        echo '<tr style="background:#f1f5f9;font-weight:bold"><td>Date</td><td>Chauffeur</td><td>Statut</td><td style="text-align:right">Dû</td><td style="text-align:right">Perçu</td><td>Mode</td><td>Notes</td></tr>';
+        foreach ($exTaxi as $pt) {
+            $isPay = $pt['statut_jour'] === 'paye';
+            $isNP  = $pt['statut_jour'] === 'non_paye';
+            $du    = in_array($pt['statut_jour'], ['paye','non_paye']) ? (float)$pt['tarif_journalier'] : 0;
+            $bg    = $isPay ? '' : ($isNP ? 'background:#fff5f5;' : 'background:#fffbeb;');
+            echo '<tr style="'.$bg.'"><td>'.date('d/m/Y',strtotime($pt['date_paiement'])).'</td>';
+            echo '<td style="font-weight:bold">'.htmlspecialchars(trim($pt['tnom'].' '.($pt['tprenom']??''))).'</td>';
+            echo '<td style="color:'.($isPay?'#10b981':($isNP?'#dc2626':'#94a3b8')).';font-weight:bold">'.($libSt[$pt['statut_jour']]??$pt['statut_jour']).'</td>';
+            echo '<td style="text-align:right">'.($du>0?number_format($du,0,',',' '):'—').'</td>';
+            echo '<td style="text-align:right;font-weight:bold;color:'.($isPay?'#10b981':'#94a3b8').'">'.((float)$pt['montant']>0?number_format((float)$pt['montant'],0,',',' '):'0').'</td>';
+            echo '<td>'.htmlspecialchars($pt['mode_paiement']??'').'</td>';
+            echo '<td>'.htmlspecialchars($pt['notes']??'').'</td></tr>';
+        }
+        echo '<tr style="background:#f0fdf4;font-weight:bold;font-size:11px"><td>TOTAL TAXI</td><td></td><td>'.$xJPaye.'/'.$xJTrav.' payés</td><td></td><td style="text-align:right;color:#10b981">'.number_format($xTotTaxi,0,',',' ').'</td><td colspan="2"></td></tr>';
+    }
+
+    // Locations
+    if (!empty($exLocs)) {
+        echo '<tr><td colspan="7" style="height:6px"></td></tr>';
+        echo '<tr><td colspan="7" style="background:#dbeafe;font-weight:bold;padding:8px;font-size:11px;color:#1e40af">LOCATIONS ('.count($exLocs).' encaissements)</td></tr>';
+        echo '<tr style="background:#f1f5f9;font-weight:bold"><td>Date</td><td>Client</td><td>Période location</td><td>Jours</td><td style="text-align:right">Perçu</td><td>Mode</td><td>Paiement</td></tr>';
+        foreach ($exLocs as $lo) {
+            echo '<tr><td>'.date('d/m/Y',strtotime($lo['created_at'])).'</td>';
+            echo '<td style="font-weight:bold">'.htmlspecialchars(trim($lo['cnom'].' '.$lo['cprenom'])).'</td>';
+            echo '<td>'.($lo['date_debut']?date('d/m/Y',strtotime($lo['date_debut'])):'').' → '.($lo['date_fin']?date('d/m/Y',strtotime($lo['date_fin'])):'').'</td>';
+            echo '<td style="text-align:center">'.(int)$lo['nombre_jours'].'</td>';
+            echo '<td style="text-align:right;font-weight:bold;color:#10b981">'.number_format((float)$lo['montant'],0,',',' ').'</td>';
+            echo '<td>'.htmlspecialchars($lo['mode_paiement']??'').'</td>';
+            echo '<td>'.htmlspecialchars(ucfirst(str_replace('_',' ',$lo['statut_paiement']??''))).'</td></tr>';
+        }
+        echo '<tr style="background:#dbeafe;font-weight:bold;font-size:11px"><td>TOTAL LOCATIONS</td><td colspan="3"></td><td style="text-align:right;color:#1e40af">'.number_format($xTotLoc,0,',',' ').'</td><td colspan="2"></td></tr>';
+    }
+
+    // Charges
+    if (!empty($exCharges)) {
+        echo '<tr><td colspan="7" style="height:6px"></td></tr>';
+        echo '<tr><td colspan="7" style="background:#fee2e2;font-weight:bold;padding:8px;font-size:11px;color:#dc2626">CHARGES ('.count($exCharges).' entrées)</td></tr>';
+        echo '<tr style="background:#f1f5f9;font-weight:bold"><td>Date</td><td>Libellé</td><td>Catégorie</td><td colspan="2" style="text-align:right">Montant</td><td colspan="2">Notes</td></tr>';
+        foreach ($exCharges as $ch) {
+            echo '<tr><td>'.date('d/m/Y',strtotime($ch['date_charge'])).'</td>';
+            echo '<td>'.htmlspecialchars($ch['libelle']??$ch['description']??'—').'</td>';
+            echo '<td>'.htmlspecialchars($ch['categorie']??$ch['type']??'').'</td>';
+            echo '<td colspan="2" style="text-align:right;font-weight:bold;color:#dc2626">-'.number_format((float)$ch['montant'],0,',',' ').'</td>';
+            echo '<td colspan="2">'.htmlspecialchars($ch['notes']??'').'</td></tr>';
+        }
+        echo '<tr style="background:#fecaca;font-weight:bold;font-size:11px"><td>TOTAL CHARGES</td><td colspan="3"></td><td style="text-align:right;color:#dc2626">-'.number_format($xTotCh,0,',',' ').'</td><td colspan="2"></td></tr>';
+    }
+
+    // Bilan final
+    echo '<tr><td colspan="7" style="height:8px"></td></tr>';
+    echo '<tr><td colspan="3" style="'.$benBg.';font-weight:bold;font-size:13px">BÉNÉFICE NET</td>';
+    echo '<td colspan="2" style="'.$benBg.';text-align:right;font-weight:bold;font-size:14px">'.number_format($xBen,0,',',' ').' FCFA</td>';
+    echo '<td colspan="2" style="'.$benBg.';font-weight:bold">ROI: '.$xRoi.'%</td></tr>';
+    echo '</table></div>';
+
+    echo '</body></html>';
+    exit;
+}
+
+// ─── EXPORT CSV (legacy) ───────────────────────────────────────────────────────
 if (isset($_GET['export']) && $_GET['export'] === 'csv') {
     $expFrom = $_GET['from'] ?? date('Y-m-01');
     $expTo   = $_GET['to']   ?? date('Y-m-d');
     header('Content-Type: text/csv; charset=utf-8');
     header('Content-Disposition: attachment; filename="analyse_' . $vehiculeId . '_' . $expFrom . '_' . $expTo . '.csv"');
     $out = fopen('php://output', 'w');
-    fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF)); // BOM UTF-8
+    fprintf($out, chr(0xEF).chr(0xBB).chr(0xBF));
     fputcsv($out, ['Date', 'Type', 'Libellé', 'Recette', 'Dépense'], ';');
-
-    // Locations (paiements)
-    $sq = $db->prepare("SELECT p.created_at, 'Location' as type, CONCAT('Location #',l.id,' - ',COALESCE(c.nom,'?'),' ',COALESCE(c.prenom,'')) as lib, p.montant as rec, 0 as dep
-        FROM paiements p JOIN locations l ON l.id=p.location_id LEFT JOIN clients c ON c.id=l.client_id
-        WHERE l.vehicule_id=? AND p.tenant_id=? AND DATE(p.created_at) BETWEEN ? AND ?");
+    $sq = $db->prepare("SELECT p.created_at, 'Location' as type, CONCAT('Location #',l.id,' - ',COALESCE(c.nom,'?'),' ',COALESCE(c.prenom,'')) as lib, p.montant as rec, 0 as dep FROM paiements p JOIN locations l ON l.id=p.location_id LEFT JOIN clients c ON c.id=l.client_id WHERE l.vehicule_id=? AND p.tenant_id=? AND DATE(p.created_at) BETWEEN ? AND ?");
     $sq->execute([$vehiculeId, $tenantId, $expFrom, $expTo]);
     foreach ($sq->fetchAll() as $row) fputcsv($out, [substr($row['created_at'],0,10),$row['type'],$row['lib'],number_format($row['rec'],0,'.',','),'0'], ';');
-
-    // Charges
     $sq = $db->prepare("SELECT date_charge, 'Charge' as type, COALESCE(libelle,description,'—') as lib, 0, montant FROM charges WHERE vehicule_id=? AND tenant_id=? AND date_charge BETWEEN ? AND ?");
     $sq->execute([$vehiculeId, $tenantId, $expFrom, $expTo]);
     foreach ($sq->fetchAll() as $row) fputcsv($out, [$row['date_charge'],$row['type'],$row['lib'],'0',number_format($row['montant'],0,'.',',')], ';');
-
-    // Maintenances déjà incluses dans charges (type='maintenance') — pas de double export
-
     fclose($out);
     exit;
 }
@@ -302,9 +496,9 @@ require_once BASE_PATH . '/includes/header.php';
 
 function badgeType(string $t): string {
     return match($t) {
-        'location'   => '<span class="badge" style="background:#dbeafe;color:#0d9488">Location</span>',
-        'taxi'       => '<span class="badge" style="background:#fef3c7;color:#d97706">VTC/Taxi</span>',
-        'entreprise' => '<span class="badge" style="background:#d1fae5;color:#059669">Entreprise</span>',
+        'location'   => '<span class="badge" style="background:#ccfbf1;color:#0d9488;border:1px solid #99f6e4">Location</span>',
+        'taxi'       => '<span class="badge" style="background:#fef3c7;color:#d97706;border:1px solid #fde68a">VTC/Taxi</span>',
+        'entreprise' => '<span class="badge" style="background:#d1fae5;color:#059669;border:1px solid #a7f3d0">Entreprise</span>',
         default      => '<span class="badge bg-secondary">' . sanitize($t) . '</span>',
     };
 }
@@ -320,41 +514,44 @@ $typeReglesLabels = [
 ?>
 
 <style>
-/* ── Barre KPIs compacte ── */
-.kpi-strip { display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:16px; }
-.kpi-strip-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; display:flex; align-items:center; gap:10px; }
-.kpi-strip-icon { width:38px; height:38px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1rem; flex-shrink:0; }
-.kpi-strip-info .kv { font-size:1.05rem; font-weight:800; color:#0f172a; line-height:1; }
-.kpi-strip-info .kl { font-size:.65rem; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
+/* ════ COULEURS PRIMAIRES (vert teal) ════ */
+:root { --c-primary:#0d9488; --c-primary-light:#f0fdfa; --c-primary-mid:#ccfbf1; }
 
-/* ── Deux colonnes ── */
-.detail-grid { display:grid; grid-template-columns:1fr 280px; gap:16px; }
-@media(max-width:900px) { .detail-grid { grid-template-columns:1fr; } .kpi-strip { grid-template-columns:repeat(3,1fr); } }
-@media(max-width:580px) { .kpi-strip { grid-template-columns:1fr 1fr; } }
+/* ════ KPI STRIP ════ */
+.kpi-strip { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:12px; }
+.kpi-strip-card { background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:12px 14px; display:flex; align-items:center; gap:10px; transition:box-shadow .15s; }
+.kpi-strip-card:hover { box-shadow:0 2px 8px rgba(0,0,0,.06); }
+.kpi-strip-icon { width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1rem; flex-shrink:0; }
+.kpi-strip-info .kv { font-size:1rem; font-weight:800; color:#0f172a; line-height:1.2; }
+.kpi-strip-info .kl { font-size:.62rem; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
 
-/* ── Info véhicule ── */
+/* ════ LAYOUT ════ */
+.detail-grid { display:grid; grid-template-columns:1fr 270px; gap:16px; }
+
+/* ════ INFOS VÉHICULE ════ */
 .info-grid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 16px; }
 .info-item .il { font-size:.67rem; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; }
-.info-item .iv { font-size:.855rem; font-weight:600; color:#0f172a; margin-top:1px; }
+.info-item .iv { font-size:.85rem; font-weight:600; color:#0f172a; margin-top:1px; }
 
-/* ── Tabs historique ── */
-.hist-tabs { display:flex; gap:2px; border-bottom:2px solid #e2e8f0; }
-.hist-tab { padding:7px 14px; font-size:.8rem; font-weight:600; cursor:pointer; text-decoration:none; color:#64748b; border-bottom:2px solid transparent; margin-bottom:-2px; white-space:nowrap; }
-.hist-tab.active { color:#0d9488; border-bottom-color:#0d9488; }
+/* ════ TABS ════ */
+.hist-tabs { display:flex; gap:0; border-bottom:2px solid #e2e8f0; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+.hist-tabs::-webkit-scrollbar { display:none; }
+.hist-tab { padding:8px 14px; font-size:.78rem; font-weight:600; cursor:pointer; text-decoration:none; color:#64748b; border-bottom:2px solid transparent; margin-bottom:-2px; white-space:nowrap; flex-shrink:0; }
+.hist-tab.active { color:#0d9488; border-bottom-color:#0d9488; background:#f0fdfa; border-radius:8px 8px 0 0; }
 
-/* ── GPS compact ── */
+/* ════ GPS ════ */
 .gps-mini-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:10px; }
 .gps-mini-stat { background:#f8fafc; border-radius:8px; padding:9px 10px; text-align:center; }
 .gps-mini-stat .gv { font-size:.95rem; font-weight:800; color:#0f172a; }
 .gps-mini-stat .gl { font-size:.6rem; color:#94a3b8; text-transform:uppercase; letter-spacing:.05em; margin-top:2px; }
 
-/* ── Doc alerts ── */
-.doc-alert { display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:4px; font-size:.72rem; font-weight:600; }
+/* ════ DOC ALERTS ════ */
+.doc-alert { display:inline-flex; align-items:center; gap:4px; padding:3px 10px; border-radius:6px; font-size:.72rem; font-weight:600; }
 .doc-alert.expired  { background:#fee2e2; color:#ef4444; }
 .doc-alert.expiring { background:#fef3c7; color:#d97706; }
 .doc-alert.ok       { background:#d1fae5; color:#059669; }
 
-/* ── Règles GPS ── */
+/* ════ RÈGLES GPS ════ */
 .regle-item { display:flex; align-items:center; gap:10px; padding:10px 14px; border-bottom:1px solid #f1f5f9; }
 .regle-item:last-child { border-bottom:none; }
 .regle-icon { width:34px; height:34px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:.85rem; flex-shrink:0; }
@@ -363,85 +560,100 @@ $typeReglesLabels = [
 .regle-params { font-size:.7rem; color:#64748b; margin-top:1px; }
 .regle-actions { display:flex; gap:4px; }
 
-/* ── Alerte item ── */
+/* ════ ALERTES ════ */
 .alerte-item { display:flex; gap:8px; padding:8px 14px; border-bottom:1px solid #f1f5f9; align-items:flex-start; }
 .alerte-item:last-child { border-bottom:none; }
 .alerte-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:5px; }
 
-/* ── Sidebar cards ── */
+/* ════ SIDEBAR ════ */
 .side-row { display:flex; justify-content:space-between; align-items:center; padding:6px 10px; border-radius:6px; font-size:.78rem; }
 
-/* ── Mobile responsive ──────────────────────────────────────────────────── */
+/* ════ ACTIONS GRID (sidebar) ════ */
+.actions-grid { display:grid; grid-template-columns:1fr; gap:5px; }
+.action-btn { display:flex; align-items:center; gap:9px; padding:9px 12px; border-radius:8px; font-size:.8rem; font-weight:600; text-decoration:none; border:none; cursor:pointer; width:100%; transition:opacity .15s; }
+.action-btn:hover { opacity:.85; }
+.action-btn i { width:16px; text-align:center; font-size:.85rem; flex-shrink:0; }
+.action-btn span { flex:1; text-align:left; }
+.action-btn-primary  { background:#0d9488; color:#fff; }
+.action-btn-success  { background:#10b981; color:#fff; }
+.action-btn-secondary{ background:#f1f5f9; color:#475569; }
+.action-btn-danger   { background:#fee2e2; color:#dc2626; }
+
+/* ════ MOBILE FIRST (≤ 960px) ════ */
 @media(max-width:960px) {
-  .detail-grid { grid-template-columns:1fr; }
-  .kpi-strip { grid-template-columns:repeat(2,1fr); gap:8px; }
+  .detail-grid { grid-template-columns:1fr; gap:12px; }
+  .kpi-strip { grid-template-columns:1fr 1fr; gap:8px; }
+  .kpi-strip-card { padding:10px 12px; gap:8px; border-radius:10px; }
+  .kpi-strip-icon { width:34px; height:34px; font-size:.88rem; }
+  .kpi-strip-info .kv { font-size:.9rem; }
+  .actions-panel .card { margin-bottom:10px; }
+  /* Actions en grille 2 colonnes sur tablette/mobile */
+  .actions-grid { grid-template-columns:1fr 1fr !important; gap:7px !important; }
+  .action-btn { padding:10px 10px; font-size:.78rem; border-radius:9px; }
 }
+
 @media(max-width:640px) {
-  .page-header { flex-direction:column !important; align-items:flex-start !important; gap:8px !important; }
-  .page-header > div:last-child { width:100%; display:flex; flex-wrap:wrap; gap:6px; }
-  .page-header > div:last-child .btn { flex:1; min-width:0; text-align:center; font-size:.72rem; padding:6px 8px; white-space:nowrap; }
-  .page-title { font-size:1.1rem !important; display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
+  /* Header */
+  .page-header { flex-direction:column !important; align-items:stretch !important; gap:8px !important; }
+  .page-header > div:last-child { display:flex !important; flex-wrap:wrap !important; gap:6px !important; }
+  .page-header > div:last-child .btn { flex:1; min-width:120px; text-align:center; font-size:.78rem; padding:9px 8px; justify-content:center; }
+  .page-title { font-size:1rem !important; line-height:1.3; }
+  .page-subtitle { font-size:.78rem !important; margin-top:3px; }
 
-  .kpi-strip { grid-template-columns:1fr 1fr !important; gap:8px !important; margin-bottom:10px !important; }
-  .kpi-strip-card { padding:10px 12px !important; gap:8px !important; border-radius:10px !important; }
-  .kpi-strip-icon { width:32px !important; height:32px !important; font-size:.85rem !important; border-radius:8px !important; }
-  .kpi-strip-info .kv { font-size:.88rem !important; }
+  /* KPI 2 colonnes seulement */
+  .kpi-strip { grid-template-columns:1fr 1fr !important; gap:7px !important; margin-bottom:8px !important; }
   .kpi-strip-info .kl { font-size:.58rem !important; }
+  .kpi-strip-info .kv { font-size:.85rem !important; }
 
-  .detail-grid { grid-template-columns:1fr !important; gap:12px !important; }
+  /* Info grid 2 col */
+  .info-grid { grid-template-columns:1fr 1fr !important; gap:6px 10px !important; }
 
-  .info-grid { grid-template-columns:1fr 1fr !important; gap:6px 12px !important; }
-  .card-body > div[style*="grid-template-columns:140px"] {
-    grid-template-columns:1fr !important;
-  }
-  .card-body > div[style*="grid-template-columns:140px"] img,
-  .card-body > div[style*="grid-template-columns:140px"] > div:first-child {
-    max-height:100px !important; width:100% !important;
-  }
+  /* Image véhicule pleine largeur mobile */
+  .veh-photo-wrap { grid-template-columns:1fr !important; }
+  .veh-photo-wrap img { max-height:140px !important; width:100% !important; object-fit:cover; }
+  .veh-photo-wrap .veh-photo-placeholder { height:80px !important; width:100% !important; }
 
+  /* GPS */
   .gps-mini-stats { grid-template-columns:1fr 1fr !important; gap:6px !important; }
-  .gps-mini-stat { padding:8px !important; }
+  .gps-mini-stat { padding:8px 6px !important; }
   .gps-mini-stat .gv { font-size:.82rem !important; }
-  #carte-gps { height:180px !important; }
+  #carte-gps { height:190px !important; }
+  #gps-actions { flex-wrap:wrap !important; gap:6px !important; }
+  #gps-actions .btn { flex:1; min-width:0; font-size:.75rem; text-align:center; justify-content:center; }
 
-  .hist-tabs { overflow-x:auto !important; -webkit-overflow-scrolling:touch; gap:0 !important; padding-bottom:4px; }
-  .hist-tab { padding:6px 10px !important; font-size:.72rem !important; white-space:nowrap !important; }
-
-  .table { font-size:.72rem !important; }
-  .table th, .table td { padding:6px 8px !important; }
+  /* Tables */
+  .table { font-size:.73rem !important; }
+  .table th, .table td { padding:6px 7px !important; }
   .table-responsive { overflow-x:auto; -webkit-overflow-scrolling:touch; }
 
-  /* Analyse financière mobile */
-  div[style*="grid-template-columns:repeat(3,1fr)"] { grid-template-columns:1fr !important; gap:8px !important; }
-  div[style*="display:flex"][style*="align-items:flex-end"][style*="height:120px"] { height:80px !important; }
-  #fin-form { flex-wrap:wrap !important; }
-  #fin-form input[type="date"] { width:120px !important; font-size:.75rem !important; }
-  div[style*="display:flex"][style*="gap:4px"][style*="flex-wrap:wrap"] a { padding:3px 8px !important; font-size:.65rem !important; }
-  div[style*="Période d'analyse"] { flex-direction:column !important; }
-  div[style*="flex:1;min-width:200px"] { min-width:0 !important; width:100% !important; }
-  div[style*="flex:1;min-width:200px"] > div[style*="display:flex"] { flex-direction:column !important; gap:6px !important; }
+  /* Analyse financière */
+  .fin-kpi-grid { grid-template-columns:1fr !important; gap:8px !important; }
+  #fin-form { flex-wrap:wrap !important; gap:6px !important; }
+  #fin-form input[type="date"] { width:100% !important; font-size:.8rem !important; }
+  .fin-shortcuts { flex-wrap:wrap !important; gap:4px !important; }
+  .fin-shortcuts a { padding:4px 8px !important; font-size:.68rem !important; }
+  .fin-cats-grid { grid-template-columns:1fr !important; }
 
-  /* Documents section mobile */
-  div[style*="display:flex"][style*="gap:10px"][style*="margin-top:12px"][style*="flex-wrap:wrap"] {
-    flex-direction:column !important; gap:8px !important;
-  }
-
-  /* Règles GPS mobile */
+  /* Règles GPS */
   .regle-item { flex-wrap:wrap; gap:8px; padding:10px 12px; }
   .regle-actions { width:100%; justify-content:flex-end; }
 
-  /* Sidebar cards mobile */
-  .side-row { font-size:.73rem !important; padding:5px 8px !important; }
+  /* Documents */
+  .docs-flex { flex-direction:column !important; gap:8px !important; }
 
-  /* Alertes GPS mobile */
-  .alerte-item { padding:8px 12px; }
-
-  /* GPS actions mobile */
-  #gps-actions { flex-wrap:wrap !important; }
-  #gps-actions .btn { flex:1; font-size:.72rem; }
+  /* Sidebar sur mobile = section pleine largeur */
+  .side-row { font-size:.75rem !important; padding:7px 10px !important; }
 }
 
-@media print { .sidebar,.topbar,.btn,.actions-panel { display:none!important } .main-content { margin:0!important; padding:0!important } }
+@media(max-width:420px) {
+  .kpi-strip-icon { display:none !important; }
+  .kpi-strip-card { padding:8px 10px; }
+}
+
+@media print {
+  .sidebar, .topbar, .btn, .actions-panel, .modal-overlay { display:none !important; }
+  .main-content { margin:0 !important; padding:0 !important; }
+}
 </style>
 
 <!-- ─── PAGE HEADER ─────────────────────────────────────────────────────────── -->
@@ -463,9 +675,9 @@ $typeReglesLabels = [
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
         <?php if ($aGps): ?>
-        <a href="<?= BASE_URL ?>app/gps/carte.php?vehicule=<?= $vehiculeId ?>" class="btn btn-secondary btn-sm"><i class="fas fa-map-marked-alt"></i> Carte GPS</a>
+        <a href="<?= BASE_URL ?>app/gps/carte.php?vehicule=<?= $vehiculeId ?>" class="btn btn-secondary btn-sm"><i class="fas fa-map-marked-alt"></i> GPS</a>
         <?php endif ?>
-        <button onclick="window.print()" class="btn btn-secondary btn-sm"><i class="fas fa-print"></i> Imprimer</button>
+        <button onclick="openModal('modal-export-veh')" class="btn btn-success btn-sm"><i class="fas fa-file-excel"></i> Excel</button>
         <a href="<?= BASE_URL ?>app/vehicules/modifier.php?id=<?= $vehiculeId ?>" class="btn btn-primary btn-sm"><i class="fas fa-edit"></i> Modifier</a>
         <?php if (hasLocationModule() && $vehicule['statut'] === 'disponible'): ?>
         <a href="<?= BASE_URL ?>app/locations/nouvelle.php?vehicule_id=<?= $vehiculeId ?>" class="btn btn-success btn-sm"><i class="fas fa-file-contract"></i> Louer</a>
@@ -488,7 +700,7 @@ $typeReglesLabels = [
 <!-- ─── KPI STRIP ─────────────────────────────────────────────────────────────── -->
 <div class="kpi-strip" style="grid-template-columns:repeat(4,1fr);margin-bottom:8px">
     <div class="kpi-strip-card" style="border-left:3px solid #0d9488">
-        <div class="kpi-strip-icon" style="background:#dbeafe;color:#0d9488"><i class="fas fa-piggy-bank"></i></div>
+        <div class="kpi-strip-icon" style="background:#ccfbf1;color:#0d9488"><i class="fas fa-piggy-bank"></i></div>
         <div class="kpi-strip-info">
             <div class="kv"><?= formatMoney($capital) ?></div>
             <div class="kl">Capital investi</div>
@@ -561,13 +773,13 @@ $typeReglesLabels = [
         <a href="<?= BASE_URL ?>app/vehicules/modifier.php?id=<?= $vehiculeId ?>" class="btn btn-ghost btn-sm"><i class="fas fa-edit"></i> Modifier</a>
     </div>
     <div class="card-body">
-        <div style="display:grid;grid-template-columns:140px 1fr;gap:14px;align-items:start">
+        <div class="veh-photo-wrap" style="display:grid;grid-template-columns:140px 1fr;gap:14px;align-items:start">
             <?php if (!empty($vehicule['photo'])): ?>
             <img src="<?= BASE_URL ?>uploads/logos/<?= sanitize($vehicule['photo']) ?>"
                  style="width:100%;border-radius:8px;border:1px solid #e2e8f0;object-fit:cover;max-height:120px" alt="">
             <?php else: ?>
-            <div style="height:110px;background:#f8fafc;border-radius:8px;display:flex;align-items:center;justify-content:center;border:2px dashed #e2e8f0">
-                <i class="fas fa-car" style="font-size:2rem;color:#cbd5e1"></i>
+            <div class="veh-photo-placeholder" style="height:110px;background:linear-gradient(135deg,#f0fdfa,#f8fafc);border-radius:8px;display:flex;align-items:center;justify-content:center;border:2px dashed #99f6e4">
+                <i class="fas fa-car" style="font-size:2rem;color:#0d9488;opacity:.4"></i>
             </div>
             <?php endif ?>
             <div class="info-grid">
@@ -584,7 +796,7 @@ $typeReglesLabels = [
         </div>
 
         <!-- Documents -->
-        <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid #e2e8f0">
+        <div class="docs-flex" style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap;padding-top:10px;border-top:1px solid #e2e8f0">
             <div>
                 <div style="font-size:.67rem;color:#94a3b8;text-transform:uppercase;margin-bottom:3px">Assurance</div>
                 <?php if ($vehicule['date_expiration_assurance']): ?>
@@ -885,7 +1097,7 @@ $typeReglesLabels = [
                         <input type="date" name="to" value="<?= $finTo ?>" class="form-control" style="width:140px;height:32px;font-size:.82rem" onchange="this.form.submit()">
                     </form>
                     <!-- Raccourcis -->
-                    <div style="display:flex;gap:4px;flex-wrap:wrap">
+                    <div class="fin-shortcuts" style="display:flex;gap:4px;flex-wrap:wrap">
                         <?php
                         $shortcuts = [
                             ['Ce mois', date('Y-m-01'), date('Y-m-t')],
@@ -905,16 +1117,16 @@ $typeReglesLabels = [
                     </div>
                 </div>
             </div>
-            <div style="display:flex;gap:6px">
-                <a href="?id=<?= $vehiculeId ?>&export=csv&from=<?= $finFrom ?>&to=<?= $finTo ?>" class="btn btn-secondary btn-sm">
-                    <i class="fas fa-file-csv"></i> Export CSV
-                </a>
-                <button onclick="window.print()" class="btn btn-secondary btn-sm"><i class="fas fa-print"></i> Imprimer</button>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button onclick="lancerExportVeh('<?= $finFrom ?>','<?= $finTo ?>')" class="btn btn-success btn-sm">
+                    <i class="fas fa-file-excel"></i> Export Excel
+                </button>
+                <button onclick="openModal('modal-export-veh')" class="btn btn-secondary btn-sm"><i class="fas fa-sliders-h"></i> Personnaliser</button>
             </div>
         </div>
 
         <!-- KPI résumé période -->
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+        <div class="fin-kpi-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
             <div style="background:#d1fae5;border-radius:10px;padding:14px 16px;border-left:4px solid #10b981">
                 <div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:#065f46;font-weight:700">Recettes période</div>
                 <div style="font-size:1.5rem;font-weight:800;color:#059669;margin-top:4px"><?= formatMoney($finRec) ?></div>
@@ -961,7 +1173,7 @@ $typeReglesLabels = [
 
         <!-- Répartition charges par catégorie -->
         <?php if (!empty($chargesParCat)): ?>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+        <div class="fin-cats-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
             <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px">
                 <div style="font-size:.78rem;font-weight:700;color:#0f172a;margin-bottom:10px"><i class="fas fa-pie-chart" style="color:#ef4444;margin-right:5px"></i> Charges par catégorie</div>
                 <?php
@@ -1189,41 +1401,45 @@ $typeReglesLabels = [
     <!-- Actions rapides -->
     <div class="card" style="margin-bottom:12px">
         <div class="card-header"><h3 class="card-title"><i class="fas fa-bolt"></i> Actions rapides</h3></div>
-        <div class="card-body" style="padding:8px;display:flex;flex-direction:column;gap:5px">
-            <a href="<?= BASE_URL ?>app/vehicules/modifier.php?id=<?= $vehiculeId ?>" class="btn btn-primary btn-sm" style="text-align:left">
-                <i class="fas fa-edit" style="width:16px"></i> Modifier
-            </a>
-            <?php if (hasLocationModule() && $vehicule['statut'] === 'disponible'): ?>
-            <a href="<?= BASE_URL ?>app/locations/nouvelle.php?vehicule_id=<?= $vehiculeId ?>" class="btn btn-success btn-sm" style="text-align:left">
-                <i class="fas fa-file-contract" style="width:16px"></i> Créer une location
-            </a>
-            <?php endif ?>
-            <?php if (hasLocationModule()): ?>
-            <a href="<?= BASE_URL ?>app/reservations/nouvelle.php?vehicule_id=<?= $vehiculeId ?>" class="btn btn-secondary btn-sm" style="text-align:left">
-                <i class="fas fa-calendar-plus" style="width:16px"></i> Réserver
-            </a>
-            <?php endif ?>
-            <a href="<?= BASE_URL ?>app/maintenances/index.php?vehicule_id=<?= $vehiculeId ?>" class="btn btn-secondary btn-sm" style="text-align:left">
-                <i class="fas fa-wrench" style="width:16px"></i> Maintenances
-            </a>
-            <a href="<?= BASE_URL ?>app/finances/charges.php?vehicule_id=<?= $vehiculeId ?>" class="btn btn-secondary btn-sm" style="text-align:left">
-                <i class="fas fa-plus-circle" style="width:16px"></i> Ajouter une charge
-            </a>
-            <?php if ($aGps): ?>
-            <a href="<?= BASE_URL ?>app/gps/carte.php?vehicule=<?= $vehiculeId ?>" class="btn btn-secondary btn-sm" style="text-align:left">
-                <i class="fas fa-map-marked-alt" style="width:16px"></i> Voir sur la carte
-            </a>
-            <a href="<?= BASE_URL ?>app/gps/historique.php?vehicule_id=<?= $vehiculeId ?>" class="btn btn-secondary btn-sm" style="text-align:left">
-                <i class="fas fa-route" style="width:16px"></i> Historique GPS
-            </a>
-            <?php endif ?>
-            <button onclick="window.print()" class="btn btn-secondary btn-sm" style="text-align:left">
-                <i class="fas fa-print" style="width:16px"></i> Imprimer
-            </button>
-            <hr style="margin:3px 0;border-color:#e2e8f0">
-            <button onclick="if(confirm('Supprimer définitivement ce véhicule ?'))document.getElementById('f-supp').submit()" class="btn btn-danger btn-sm" style="text-align:left">
-                <i class="fas fa-trash" style="width:16px"></i> Supprimer
-            </button>
+        <div class="card-body" style="padding:8px">
+            <div class="actions-grid">
+                <a href="<?= BASE_URL ?>app/vehicules/modifier.php?id=<?= $vehiculeId ?>" class="action-btn action-btn-primary">
+                    <i class="fas fa-edit"></i><span>Modifier</span>
+                </a>
+                <button onclick="openModal('modal-export-veh')" class="action-btn action-btn-success">
+                    <i class="fas fa-file-excel"></i><span>Export Excel</span>
+                </button>
+                <?php if (hasLocationModule() && $vehicule['statut'] === 'disponible'): ?>
+                <a href="<?= BASE_URL ?>app/locations/nouvelle.php?vehicule_id=<?= $vehiculeId ?>" class="action-btn action-btn-success">
+                    <i class="fas fa-file-contract"></i><span>Louer</span>
+                </a>
+                <?php endif ?>
+                <?php if (hasLocationModule()): ?>
+                <a href="<?= BASE_URL ?>app/reservations/nouvelle.php?vehicule_id=<?= $vehiculeId ?>" class="action-btn action-btn-secondary">
+                    <i class="fas fa-calendar-plus"></i><span>Réserver</span>
+                </a>
+                <?php endif ?>
+                <a href="<?= BASE_URL ?>app/maintenances/index.php?vehicule_id=<?= $vehiculeId ?>" class="action-btn action-btn-secondary">
+                    <i class="fas fa-wrench"></i><span>Maintenances</span>
+                </a>
+                <a href="<?= BASE_URL ?>app/finances/charges.php?vehicule_id=<?= $vehiculeId ?>" class="action-btn action-btn-secondary">
+                    <i class="fas fa-plus-circle"></i><span>Add charge</span>
+                </a>
+                <?php if ($aGps): ?>
+                <a href="<?= BASE_URL ?>app/gps/carte.php?vehicule=<?= $vehiculeId ?>" class="action-btn action-btn-secondary">
+                    <i class="fas fa-map-marked-alt"></i><span>Carte GPS</span>
+                </a>
+                <a href="<?= BASE_URL ?>app/gps/historique.php?vehicule_id=<?= $vehiculeId ?>" class="action-btn action-btn-secondary">
+                    <i class="fas fa-route"></i><span>Trajets GPS</span>
+                </a>
+                <?php endif ?>
+                <button onclick="window.print()" class="action-btn action-btn-secondary">
+                    <i class="fas fa-print"></i><span>Imprimer</span>
+                </button>
+                <button onclick="if(confirm('Supprimer définitivement ce véhicule ?'))document.getElementById('f-supp').submit()" class="action-btn action-btn-danger">
+                    <i class="fas fa-trash"></i><span>Supprimer</span>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -1295,12 +1511,92 @@ $typeReglesLabels = [
 </div><!-- /sidebar -->
 </div><!-- /detail-grid -->
 
+<!-- ── MODAL Export Excel ── -->
+<div id="modal-export-veh" class="modal-overlay">
+    <div class="modal" style="max-width:440px">
+        <div class="modal-header">
+            <h3><i class="fas fa-file-excel" style="color:#10b981"></i> Exporter la fiche véhicule</h3>
+            <button class="modal-close" onclick="closeModal('modal-export-veh')">&times;</button>
+        </div>
+        <div style="padding:20px">
+            <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:.82rem">
+                <strong style="color:#166534"><?= sanitize($vehicule['nom']) ?> — <?= sanitize($vehicule['immatriculation']) ?></strong>
+                <br><span style="color:#64748b;font-size:.75rem">Excel 2 feuilles : Résumé + Mouvements (taxi/locations/charges)</span>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Période</label>
+                <select id="exp-veh-periode" class="form-control" style="font-size:.82rem" onchange="toggleExportVehDates(this.value)">
+                    <option value="tout">Depuis le début</option>
+                    <option value="mois">Ce mois</option>
+                    <option value="3mois">3 derniers mois</option>
+                    <option value="6mois">6 derniers mois</option>
+                    <option value="annee">Cette année</option>
+                    <option value="custom">Dates personnalisées</option>
+                </select>
+            </div>
+            <div id="exp-veh-dates" style="display:none">
+                <div class="form-row cols-2">
+                    <div class="form-group">
+                        <label class="form-label">Du</label>
+                        <input type="date" id="exp-veh-deb" class="form-control" value="<?= $vehicule['created_at'] ? date('Y-m-d', strtotime($vehicule['created_at'])) : date('Y-01-01') ?>">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Au</label>
+                        <input type="date" id="exp-veh-fin" class="form-control" value="<?= date('Y-m-d') ?>">
+                    </div>
+                </div>
+            </div>
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('modal-export-veh')">Annuler</button>
+                <button type="button" class="btn btn-success" onclick="lancerExportVehModal()"><i class="fas fa-download"></i> Télécharger</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <form id="f-supp" method="POST" action="<?= BASE_URL ?>app/vehicules/supprimer.php" style="display:none">
     <?= csrfField() ?>
     <input type="hidden" name="id" value="<?= $vehiculeId ?>">
 </form>
 
 <script>
+var VEH_ID = <?= $vehiculeId ?>;
+
+function lancerExportVeh(ed, ef) {
+    var url = '?id='+VEH_ID+'&action=export_excel';
+    if (ed) url += '&ed='+ed;
+    if (ef) url += '&ef='+ef;
+    window.location.href = url;
+}
+
+function toggleExportVehDates(val) {
+    document.getElementById('exp-veh-dates').style.display = val === 'custom' ? '' : 'none';
+}
+
+function lancerExportVehModal() {
+    var sel = document.getElementById('exp-veh-periode').value;
+    var ed = '', ef = '';
+    var now = new Date();
+    var today = now.toISOString().slice(0,10);
+    if (sel === 'mois') {
+        ed = now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-01';
+        ef = today;
+    } else if (sel === '3mois') {
+        var d = new Date(now); d.setMonth(d.getMonth()-3);
+        ed = d.toISOString().slice(0,10); ef = today;
+    } else if (sel === '6mois') {
+        var d = new Date(now); d.setMonth(d.getMonth()-6);
+        ed = d.toISOString().slice(0,10); ef = today;
+    } else if (sel === 'annee') {
+        ed = now.getFullYear()+'-01-01'; ef = today;
+    } else if (sel === 'custom') {
+        ed = document.getElementById('exp-veh-deb').value;
+        ef = document.getElementById('exp-veh-fin').value;
+    }
+    lancerExportVeh(ed, ef);
+    closeModal('modal-export-veh');
+}
+
 function updateRegleParams(type) {
     const all = ['vitesse','horaire','km_jour','ralenti','immobilisation','geofence'];
     all.forEach(t => {
