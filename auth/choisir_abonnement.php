@@ -26,8 +26,8 @@ $msg = "Bonjour FlotteCar ! Je souhaite activer mon compte.\n\n"
      . "🔗 *Lien de connexion :* " . $loginUrl . "\n"
      . "🆔 *ID compte :* #" . $nc['tenant_id'] . "\n\n";
 
-$msgMensuel = $msg . "💳 *Plan choisi :* Mensuel — *20 000 FCFA* · Merci 🙏";
-$msgAnnuel  = $msg . "💳 *Plan choisi :* Annuel — *150 000 FCFA* · Merci 🙏";
+$msgMensuel = $msg . "💳 *Plan choisi :* Mensuel — *15 000 FCFA* · Merci 🙏";
+$msgAnnuel  = $msg . "💳 *Plan choisi :* Annuel — *115 000 FCFA* · Merci 🙏";
 
 $waUrlMensuel = 'https://wa.me/' . ADMIN_WA . '?text=' . rawurlencode($msgMensuel);
 $waUrlAnnuel  = 'https://wa.me/' . ADMIN_WA . '?text=' . rawurlencode($msgAnnuel);
@@ -203,7 +203,7 @@ unset($_SESSION['nouveau_compte']);
     <a href="<?= $waUrlMensuel ?>" target="_blank" class="card" onclick="showSent()">
         <div class="card-body">
             <div class="plan-name">Mensuel</div>
-            <div class="price">20 000 <span class="price-currency">FCFA</span></div>
+            <div class="price">15 000 <span class="price-currency">FCFA</span></div>
             <div class="price-period">par mois · sans engagement</div>
         </div>
         <span class="card-cta blue"><i class="fab fa-whatsapp"></i> Choisir ce plan</span>
@@ -214,9 +214,9 @@ unset($_SESSION['nouveau_compte']);
         <div class="badge-best">Meilleure offre</div>
         <div class="card-body">
             <div class="plan-name">Annuel</div>
-            <div class="price">150 000 <span class="price-currency">FCFA</span></div>
+            <div class="price">120 000 <span class="price-currency">FCFA</span></div>
             <div class="price-period">par an · paiement unique</div>
-            <div class="savings">Économie de 90 000 FCFA</div>
+            <div class="savings">Économie de 60 000 FCFA</div>
         </div>
         <span class="card-cta purple"><i class="fab fa-whatsapp"></i> Choisir ce plan</span>
     </a>

@@ -37,7 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $forfait = $_POST['forfait'] ?? 'mensuel';
                 $duree   = $forfait === 'annuel' ? 365 : 30;
-                $prix    = $forfait === 'annuel' ? 150000 : 20000;
+                $prix    = $forfait === 'annuel' ? 120000 : 15000;
                 $db->prepare("UPDATE tenants SET actif=1 WHERE id=?")->execute([$tid]);
                 $db->prepare("UPDATE abonnements SET statut='expire' WHERE tenant_id=? AND statut='actif'")->execute([$tid]);
                 $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,'starter',$prix,$duree]);
@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try {
                 $forfait = $_POST['forfait_prolonger'] ?? 'mensuel';
                 $duree   = $forfait === 'annuel' ? 365 : 30;
-                $prix    = $forfait === 'annuel' ? 150000 : 20000;
+                $prix    = $forfait === 'annuel' ? 120000 : 15000;
                 $exist = $db->prepare("SELECT id FROM abonnements WHERE tenant_id=? AND statut='actif' LIMIT 1");
                 $exist->execute([$tid]);
                 $existId = $exist->fetchColumn();
@@ -302,14 +302,14 @@ require_once BASE_PATH . '/includes/header.php';
                             <label style="cursor:pointer"><input type="radio" name="forfait" value="mensuel" checked style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="mensuel" style="border:2px solid #0d9488;border-radius:12px;padding:14px;text-align:center;background:#eff6ff">
                                     <div style="font-size:.7rem;font-weight:700;color:#0d9488;text-transform:uppercase;margin-bottom:4px">Mensuel</div>
-                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">20 000 FCFA</div>
+                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">15 000 FCFA</div>
                                     <div style="font-size:.72rem;color:#64748b">30 jours</div>
                                 </div>
                             </label>
                             <label style="cursor:pointer"><input type="radio" name="forfait" value="annuel" style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="annuel" style="border:2px solid #e2e8f0;border-radius:12px;padding:14px;text-align:center;background:#fff">
                                     <div style="font-size:.7rem;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:4px">Annuel</div>
-                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">150 000 FCFA</div>
+                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">120 000 FCFA</div>
                                     <div style="font-size:.72rem;color:#64748b">365 jours</div>
                                 </div>
                             </label>
@@ -337,14 +337,14 @@ require_once BASE_PATH . '/includes/header.php';
                             <label style="cursor:pointer"><input type="radio" name="forfait_prolonger" value="mensuel" checked style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="mensuel" style="border:2px solid #0d9488;border-radius:12px;padding:14px;text-align:center;background:#eff6ff">
                                     <div style="font-size:.7rem;font-weight:700;color:#0d9488;text-transform:uppercase;margin-bottom:4px">Mensuel</div>
-                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">20 000 FCFA</div>
+                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">15 000 FCFA</div>
                                     <div style="font-size:.72rem;color:#64748b">+30 jours</div>
                                 </div>
                             </label>
                             <label style="cursor:pointer"><input type="radio" name="forfait_prolonger" value="annuel" style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="annuel" style="border:2px solid #e2e8f0;border-radius:12px;padding:14px;text-align:center;background:#fff">
                                     <div style="font-size:.7rem;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:4px">Annuel</div>
-                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">150 000 FCFA</div>
+                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">120 000 FCFA</div>
                                     <div style="font-size:.72rem;color:#64748b">+365 jours</div>
                                 </div>
                             </label>

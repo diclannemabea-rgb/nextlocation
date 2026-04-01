@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($act === 'activer_compte') {
         $forfait = $_POST['forfait'] ?? 'mensuel';
         $duree   = $forfait === 'annuel' ? 365 : 30;
-        $prix    = $forfait === 'annuel' ? 150000 : 20000;
+        $prix    = $forfait === 'annuel' ? 120000 : 15000;
         $db->prepare("UPDATE tenants SET actif=1, plan=?, updated_at=NOW() WHERE id=?")->execute([$forfait, $tid]);
         $db->prepare("UPDATE abonnements SET statut='expire' WHERE tenant_id=? AND statut='actif'")->execute([$tid]);
         $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid,$forfait,$prix,$duree]);
@@ -34,7 +34,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($act === 'prolonger_abo') {
         $forfait = $_POST['forfait'] ?? 'mensuel';
         $duree   = $forfait === 'annuel' ? 365 : 30;
-        $prix    = $forfait === 'annuel' ? 150000 : 20000;
+        $prix    = $forfait === 'annuel' ? 120000 : 15000;
         $existId = $db->prepare("SELECT id FROM abonnements WHERE tenant_id=? AND statut='actif' LIMIT 1");
         $existId->execute([$tid]);
         $existId = $existId->fetchColumn();
@@ -295,8 +295,8 @@ require_once BASE_PATH . '/includes/header.php';
             <div class="abo-box">
                 <div class="ab-label">Forfait actif</div>
                 <div class="ab-plan">
-                    <?php if ($ab['plan']==='mensuel') echo 'Mensuel — 20 000 FCFA';
-                    elseif ($ab['plan']==='annuel') echo 'Annuel — 150 000 FCFA';
+                    <?php if ($ab['plan']==='mensuel') echo 'Mensuel — 15 000 FCFA';
+                    elseif ($ab['plan']==='annuel') echo 'Annuel — 115 000 FCFA';
                     else echo sanitize($ab['plan']); ?>
                 </div>
                 <div class="ab-dates"><?= formatDate($ab['date_debut']) ?> → <?= formatDate($ab['date_fin']) ?></div>
@@ -498,7 +498,7 @@ require_once BASE_PATH . '/includes/header.php';
         <div class="modal-header"><h3>Paiement — <?= sanitize($t['nom_entreprise']) ?></h3><button class="modal-close" onclick="closeModal('m-paie')">&times;</button></div>
         <form method="POST" style="padding:20px">
             <?= csrfField() ?><input type="hidden" name="action" value="paiement">
-            <div class="form-group"><label class="form-label">Montant (FCFA)</label><input type="number" name="montant" class="form-control" placeholder="20000" min="0" required></div>
+            <div class="form-group"><label class="form-label">Montant (FCFA)</label><input type="number" name="montant" class="form-control" placeholder="15000" min="0" required></div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                 <div class="form-group"><label class="form-label">Mode</label>
                     <select name="mode" class="form-control">
@@ -578,15 +578,15 @@ function forfaitCards(string $name): string {
         <label style="cursor:pointer"><input type="radio" name="'.$name.'" value="mensuel" checked style="display:none" class="radio-forfait">
             <div class="forfait-card" data-val="mensuel" style="border:2px solid #0d9488;border-radius:12px;padding:16px;text-align:center;background:#eff6ff">
                 <div style="font-size:.68rem;font-weight:700;color:#0d9488;text-transform:uppercase;margin-bottom:6px">Mensuel</div>
-                <div style="font-size:1.25rem;font-weight:900;color:#0f172a">20 000 FCFA</div>
+                <div style="font-size:1.25rem;font-weight:900;color:#0f172a">15 000 FCFA</div>
                 <div style="font-size:.7rem;color:#64748b;margin-top:3px">30 jours</div>
             </div>
         </label>
         <label style="cursor:pointer"><input type="radio" name="'.$name.'" value="annuel" style="display:none" class="radio-forfait">
             <div class="forfait-card" data-val="annuel" style="border:2px solid #e2e8f0;border-radius:12px;padding:16px;text-align:center;background:#fff">
                 <div style="font-size:.68rem;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:6px">Annuel</div>
-                <div style="font-size:1.25rem;font-weight:900;color:#0f172a">150 000 FCFA</div>
-                <div style="font-size:.7rem;color:#16a34a;font-weight:700;margin-top:3px">Économie 90 000 F</div>
+                <div style="font-size:1.25rem;font-weight:900;color:#0f172a">115 000 FCFA</div>
+                <div style="font-size:.7rem;color:#16a34a;font-weight:700;margin-top:3px">Économie 60 000 F</div>
             </div>
         </label>
     </div>';

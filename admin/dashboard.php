@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $forfait = $_POST['forfait'] ?? 'mensuel';
             $duree   = $forfait === 'annuel' ? 365 : 30;
-            $prix    = $forfait === 'annuel' ? 150000 : 20000;
+            $prix    = $forfait === 'annuel' ? 120000 : 15000;
             $db->prepare("UPDATE tenants SET actif=1 WHERE id=?")->execute([$tid]);
             $db->prepare("UPDATE abonnements SET statut='expire' WHERE tenant_id=? AND statut='actif'")->execute([$tid]);
             $db->prepare("INSERT INTO abonnements (tenant_id,plan,prix,date_debut,date_fin,statut,created_at) VALUES (?,?,?,CURDATE(),DATE_ADD(CURDATE(),INTERVAL ? DAY),'actif',NOW())")->execute([$tid, 'starter', $prix, $duree]);
@@ -38,7 +38,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         try {
             $forfait = $_POST['forfait_prolonger'] ?? 'mensuel';
             $duree   = $forfait === 'annuel' ? 365 : 30;
-            $prix    = $forfait === 'annuel' ? 150000 : 20000;
+            $prix    = $forfait === 'annuel' ? 120000 : 15000;
             $existStmt = $db->prepare("SELECT id, date_fin FROM abonnements WHERE tenant_id=? AND statut='actif' LIMIT 1");
             $existStmt->execute([$tid]);
             $existAbo = $existStmt->fetch(PDO::FETCH_ASSOC);
@@ -279,7 +279,7 @@ require_once BASE_PATH . '/includes/header.php';
                                 <input type="radio" name="forfait" value="mensuel" checked style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="mensuel" style="border:2px solid #0d9488;border-radius:12px;padding:16px;text-align:center;background:#eff6ff;transition:all .15s">
                                     <div style="font-size:.7rem;font-weight:700;color:#0d9488;text-transform:uppercase;margin-bottom:6px">Mensuel</div>
-                                    <div style="font-size:1.3rem;font-weight:900;color:#0f172a">20 000</div>
+                                    <div style="font-size:1.3rem;font-weight:900;color:#0f172a">15 000</div>
                                     <div style="font-size:.72rem;color:#64748b">FCFA / mois</div>
                                 </div>
                             </label>
@@ -287,9 +287,9 @@ require_once BASE_PATH . '/includes/header.php';
                                 <input type="radio" name="forfait" value="annuel" style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="annuel" style="border:2px solid #e2e8f0;border-radius:12px;padding:16px;text-align:center;background:#fff;transition:all .15s">
                                     <div style="font-size:.7rem;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:6px">Annuel</div>
-                                    <div style="font-size:1.3rem;font-weight:900;color:#0f172a">150 000</div>
+                                    <div style="font-size:1.3rem;font-weight:900;color:#0f172a">120 000</div>
                                     <div style="font-size:.72rem;color:#64748b">FCFA / an</div>
-                                    <div style="font-size:.68rem;font-weight:700;color:#16a34a;margin-top:4px">Économie 90 000</div>
+                                    <div style="font-size:.68rem;font-weight:700;color:#16a34a;margin-top:4px">Économie 60 000</div>
                                 </div>
                             </label>
                         </div>
@@ -387,7 +387,7 @@ require_once BASE_PATH . '/includes/header.php';
                                 <input type="radio" name="forfait_prolonger" value="mensuel" checked style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="mensuel" style="border:2px solid #0d9488;border-radius:12px;padding:14px;text-align:center;background:#eff6ff">
                                     <div style="font-size:.7rem;font-weight:700;color:#0d9488;text-transform:uppercase;margin-bottom:4px">Mensuel</div>
-                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">20 000 FCFA</div>
+                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">15 000 FCFA</div>
                                     <div style="font-size:.72rem;color:#64748b">+30 jours</div>
                                 </div>
                             </label>
@@ -395,7 +395,7 @@ require_once BASE_PATH . '/includes/header.php';
                                 <input type="radio" name="forfait_prolonger" value="annuel" style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="annuel" style="border:2px solid #e2e8f0;border-radius:12px;padding:14px;text-align:center;background:#fff">
                                     <div style="font-size:.7rem;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:4px">Annuel</div>
-                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">150 000 FCFA</div>
+                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">120 000 FCFA</div>
                                     <div style="font-size:.72rem;color:#64748b">+365 jours</div>
                                 </div>
                             </label>
@@ -421,7 +421,7 @@ require_once BASE_PATH . '/includes/header.php';
                         <input type="hidden" name="tenant_id" value="<?= $t['id'] ?>">
                         <div class="form-group">
                             <label class="form-label">Montant (FCFA)</label>
-                            <input type="number" name="montant" class="form-control" placeholder="20000" min="0" required>
+                            <input type="number" name="montant" class="form-control" placeholder="15000" min="0" required>
                         </div>
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
                             <div class="form-group">
@@ -512,14 +512,14 @@ require_once BASE_PATH . '/includes/header.php';
                             <label style="cursor:pointer"><input type="radio" name="forfait_prolonger" value="mensuel" checked style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="mensuel" style="border:2px solid #0d9488;border-radius:12px;padding:14px;text-align:center;background:#eff6ff">
                                     <div style="font-size:.7rem;font-weight:700;color:#0d9488;text-transform:uppercase;margin-bottom:4px">Mensuel</div>
-                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">20 000 FCFA</div>
+                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">15 000 FCFA</div>
                                     <div style="font-size:.72rem;color:#64748b">+30 jours</div>
                                 </div>
                             </label>
                             <label style="cursor:pointer"><input type="radio" name="forfait_prolonger" value="annuel" style="display:none" class="radio-forfait">
                                 <div class="forfait-card" data-val="annuel" style="border:2px solid #e2e8f0;border-radius:12px;padding:14px;text-align:center;background:#fff">
                                     <div style="font-size:.7rem;font-weight:700;color:#7c3aed;text-transform:uppercase;margin-bottom:4px">Annuel</div>
-                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">150 000 FCFA</div>
+                                    <div style="font-size:1.2rem;font-weight:900;color:#0f172a">120 000 FCFA</div>
                                     <div style="font-size:.72rem;color:#64748b">+365 jours</div>
                                 </div>
                             </label>

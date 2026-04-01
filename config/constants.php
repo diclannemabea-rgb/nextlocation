@@ -56,8 +56,8 @@ define('PLAN_ENTERPRISE', 'enterprise');
 // define('PRIX_STARTER',    5000);   // OBSOLÈTE
 // define('PRIX_PRO',        15000);  // OBSOLÈTE
 // define('PRIX_ENTERPRISE', 35000);  // OBSOLÈTE
-define('PRIX_MENSUEL',   20000);
-define('PRIX_ANNUEL',    150000);
+define('PRIX_MENSUEL',   15000);
+define('PRIX_ANNUEL',    120000);
 
 // Limites véhicules par plan
 define('LIMIT_STARTER',   3);

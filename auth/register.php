@@ -674,7 +674,7 @@ $csrfToken = generateCSRF();
                 <div class="plan-card" id="plan-mensuel" onclick="selectPlan('mensuel')">
                     <input type="radio" name="plan_choisi" value="mensuel" checked>
                     <div class="plan-name">Mensuel</div>
-                    <div class="plan-price">20 000 <span>FCFA/mois</span></div>
+                    <div class="plan-price">15 000 <span>FCFA/mois</span></div>
                     <ul class="plan-features">
                         <li>Jusqu'a 10 vehicules</li>
                         <li>Suivi GPS temps reel</li>
@@ -686,7 +686,7 @@ $csrfToken = generateCSRF();
                     <div class="plan-badge">Economisez 37%</div>
                     <input type="radio" name="plan_choisi" value="annuel">
                     <div class="plan-name">Annuel</div>
-                    <div class="plan-price">150 000 <span>FCFA/an</span></div>
+                    <div class="plan-price">120 000 <span>FCFA/an</span></div>
                     <ul class="plan-features">
                         <li>Jusqu'a 10 vehicules</li>
                         <li>Suivi GPS temps reel</li>
